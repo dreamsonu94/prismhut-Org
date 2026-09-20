@@ -62,10 +62,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (err: any) {
       if (err?.response?.status === 401) {
         console.warn('Authentication rejected: invalid credentials');
-      } else {
-        console.error('Login error:', err);
+        return false;
       }
-      return false;
+      console.error('Login error:', err);
+      throw err;
     }
   };
 

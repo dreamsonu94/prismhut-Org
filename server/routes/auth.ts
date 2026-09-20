@@ -37,18 +37,17 @@ router.post('/login', async (req, res) => {
       },
     });
 
-    if (!user || !user.isActive) {
-      return res.status(401).json({
-        success: false,
-        error: {
-          code: 'INVALID_CREDENTIALS',
-          message: 'Invalid username or password',
-        },
-      });
-    }
+    const isMatch = user ? await bcrypt.compare(password, user.password) : false;
 
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
+    // Safe authentication diagnostics (NEVER logs sensitive passwords, hashes, tokens, or secrets)
+    console.log('[AUTH LOGIN ATTEMPT]', {
+      usernameReceived: Boolean(username) ? 'yes' : 'no',
+      userFound: Boolean(user) ? 'yes' : 'no',
+      passwordValid: isMatch ? 'yes' : 'no',
+      databaseConnected: 'yes',
+    });
+
+    if (!user || !user.isActive || !isMatch) {
       return res.status(401).json({
         success: false,
         error: {

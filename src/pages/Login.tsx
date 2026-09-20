@@ -12,6 +12,16 @@ export const Login: React.FC = () => {
   const { login } = useAuth();
   const navigate = useNavigate();
 
+  const getRoleRedirect = (role?: string, uname?: string): string => {
+    const r = (role || '').toUpperCase();
+    const u = (uname || '').toLowerCase();
+    if (r === 'KITCHEN' || u === 'kitchen') return '/kitchen';
+    if (r === 'BAR' || u === 'bar') return '/bar';
+    if (r === 'CASHIER' || u === 'cashier') return '/billing';
+    if (r === 'ADMIN' || u === 'admin' || r === 'MANAGER' || u === 'manager') return '/dashboard';
+    return '/tables';
+  };
+
   const handleLogin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setError(null);
@@ -20,12 +30,21 @@ export const Login: React.FC = () => {
     try {
       const ok = await login(username, password);
       if (ok) {
-        navigate('/tables');
+        const saved = localStorage.getItem('pos_user');
+        const parsed = saved ? JSON.parse(saved) : null;
+        navigate(getRoleRedirect(parsed?.role, username));
       } else {
         setError('Invalid username or password. Please try again.');
       }
-    } catch (err) {
-      setError('An error occurred during authentication.');
+    } catch (err: any) {
+      const msg = err?.response?.data?.error?.message;
+      if (err?.response?.status === 401) {
+        setError('Invalid username or password. Please try again.');
+      } else if (err?.message?.includes('Network Error') || err?.response?.status === 405) {
+        setError('Cannot connect to backend server. Please verify network status.');
+      } else {
+        setError(msg || 'An error occurred during authentication.');
+      }
     } finally {
       setLoading(false);
     }
@@ -45,13 +64,19 @@ export const Login: React.FC = () => {
     setPassword('password123');
     setError(null);
     setLoading(true);
-    const ok = await login(u, 'password123');
-    setLoading(false);
-    if (ok) {
-      if (u === 'kitchen') navigate('/kitchen');
-      else if (u === 'bar') navigate('/bar');
-      else if (u === 'cashier') navigate('/billing');
-      else navigate('/tables');
+    try {
+      const ok = await login(u, 'password123');
+      if (ok) {
+        const saved = localStorage.getItem('pos_user');
+        const parsed = saved ? JSON.parse(saved) : null;
+        navigate(getRoleRedirect(parsed?.role, u));
+      } else {
+        setError('Invalid username or password. Please try again.');
+      }
+    } catch (err: any) {
+      setError('An error occurred during authentication.');
+    } finally {
+      setLoading(false);
     }
   };
 

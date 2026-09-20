@@ -1,3 +1,5 @@
+import { RoleType } from '@prisma/client';
+import bcrypt from 'bcryptjs';
 import { prisma } from './prisma.js';
 
 let pgServerInstance: any = null;
@@ -48,6 +50,75 @@ export function startDatabaseKeepAlive(): void {
   }
 }
 
+export async function ensureStaffUsers(): Promise<void> {
+  const staffToEnsure = [
+    { username: 'admin', name: 'Alex Harrison (Admin)', role: RoleType.ADMIN, email: 'admin@smartpos.com' },
+    { username: 'manager', name: 'Maria Santos (Manager)', role: RoleType.MANAGER, email: 'manager@smartpos.com' },
+    { username: 'cashier', name: 'David Kim (Cashier)', role: RoleType.CASHIER, email: 'cashier@smartpos.com' },
+    { username: 'waiter', name: 'Liam Walker (Waiter)', role: RoleType.WAITER, email: 'waiter@smartpos.com' },
+    { username: 'kitchen', name: 'Chef Gordon (Kitchen)', role: RoleType.KITCHEN, email: 'kitchen@smartpos.com' },
+    { username: 'bar', name: 'Bartender Sam (Bar)', role: RoleType.BAR, email: 'bar@smartpos.com' },
+  ];
+
+  try {
+    let restaurant = await prisma.restaurant.findFirst();
+    if (!restaurant) {
+      restaurant = await prisma.restaurant.create({
+        data: {
+          name: 'Restaurant Smart POS & Bistro',
+          currency: '$',
+          defaultTaxRate: 8.5,
+          serviceChargeRate: 5.0,
+        },
+      });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash('password123', salt);
+
+    for (const staff of staffToEnsure) {
+      let role = await prisma.role.findUnique({ where: { name: staff.role } });
+      if (!role) {
+        role = await prisma.role.create({
+          data: {
+            name: staff.role,
+            description: `${staff.role} role with designated permissions.`,
+          },
+        });
+      }
+
+      const existingUser = await prisma.user.findUnique({ where: { username: staff.username } });
+      if (!existingUser) {
+        await prisma.user.create({
+          data: {
+            restaurantId: restaurant.id,
+            roleId: role.id,
+            name: staff.name,
+            username: staff.username,
+            email: staff.email,
+            phone: '+1 555-0199',
+            password: hashedPassword,
+            isActive: true,
+          },
+        });
+        console.log(`[Database] Seeded missing staff demo user: ${staff.username}`);
+      } else if (!existingUser.isActive || !existingUser.password.startsWith('$2')) {
+        await prisma.user.update({
+          where: { id: existingUser.id },
+          data: {
+            password: hashedPassword,
+            isActive: true,
+            roleId: role.id,
+          },
+        });
+        console.log(`[Database] Synchronized staff demo user credentials: ${staff.username}`);
+      }
+    }
+  } catch (err: any) {
+    console.warn('[Database] Note on ensureStaffUsers:', sanitizeDbError(err));
+  }
+}
+
 export async function ensureDatabase(): Promise<void> {
   const dbUrl = process.env.DATABASE_URL;
   const isProd = process.env.NODE_ENV === 'production';
@@ -59,6 +130,7 @@ export async function ensureDatabase(): Promise<void> {
     console.log('[Database] Production mode: Verifying Supabase PostgreSQL connection...');
     try {
       await prisma.$queryRaw`SELECT 1 as connected`;
+      await ensureStaffUsers();
       const userCount = await prisma.user.count();
       console.log(`[Database] Supabase PostgreSQL connected successfully (${userCount} verified users).`);
       startDatabaseKeepAlive();

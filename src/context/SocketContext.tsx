@@ -44,7 +44,15 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     // Determine WebSocket server URL (handles same-origin and separate cloud domains)
     const apiEnv = import.meta.env.VITE_API_BASE_URL;
     const wsEnv = import.meta.env.VITE_WS_URL;
-    const serverUrl = wsEnv || (apiEnv && apiEnv.startsWith('http') ? apiEnv.replace(/\/api(\/v1)?\/?$/, '') : undefined);
+    let serverUrl = wsEnv || (apiEnv && apiEnv.startsWith('http') ? apiEnv.replace(/\/api(\/v1)?\/?$/, '') : undefined);
+
+    // Auto-detect Vercel or production hosting to connect WebSocket to Render backend
+    if (!serverUrl && typeof window !== 'undefined') {
+      const host = window.location.hostname;
+      if (host.includes('vercel.app') || host.includes('prismhut') || import.meta.env.PROD) {
+        serverUrl = 'https://prismhut-org.onrender.com';
+      }
+    }
 
     const socketInstance = serverUrl
       ? io(serverUrl, {
