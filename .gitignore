@@ -6,3 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+.pgdata/
+pgdata/
+pglite_data/
+test_fresh_db/
+
