@@ -41,7 +41,7 @@ export function startDatabaseKeepAlive(): void {
         } catch (_) {}
       }
     }
-  }, 120000); // 2 minutes
+  }, 30000); // 30 seconds to stay safely within cloud NAT and pooler timeout windows
 
   if (keepAliveTimer.unref) {
     keepAliveTimer.unref();
