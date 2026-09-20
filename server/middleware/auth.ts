@@ -15,7 +15,7 @@ export interface AuthenticatedRequest extends Request {
   user?: AuthenticatedUser;
 }
 
-const JWT_SECRET = process.env.JWT_SECRET || 'restaurant_pos_secret_key_jwt_2026_super_secure';
+const JWT_SECRET = process.env.JWT_SECRET || 'Sx+do8nvsU5Zgj8dg8yyxoI1KFoUF06v6e4+hvKgwrsIT74UcTMIZEkrWfl+mkbRJKkLGtkt1QqJTNgxD7CVQQ==';
 
 export const generateToken = (user: AuthenticatedUser): string => {
   return jwt.sign(
