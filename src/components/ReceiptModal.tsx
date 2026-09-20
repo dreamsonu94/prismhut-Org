@@ -20,41 +20,97 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ invoice, onClose }) 
       : invoice.grandTotal;
   const changeDue = Math.max(0, paidAmount - invoice.grandTotal);
 
-  const handleDownload = async () => {
+  const generateReceiptHtml = () => {
+    const rName = invoice.restaurant?.name || 'RESTAURANT SMART POS';
+    const rAddr = invoice.restaurant?.address || '128 Gourmet Boulevard, City Center';
+    const rPhone = invoice.restaurant?.phone || '+1 (555) 839-2041';
+    const itemsHtml = (invoice.order?.items || [])
+      .map(
+        (item) => `
+        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+          <div style="flex: 1; padding-right: 6px;">
+            <div>${item.menuItem?.name || 'Item'}</div>
+            ${item.notes ? `<div style="font-size: 10px; color: #666;">* ${item.notes}</div>` : ''}
+          </div>
+          <div style="width: 60px; text-align: center;">${item.quantity} x $${item.unitPrice.toFixed(2)}</div>
+          <div style="width: 55px; text-align: right; font-weight: bold;">$${(item.quantity * item.unitPrice).toFixed(2)}</div>
+        </div>`
+      )
+      .join('');
+
+    return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Receipt - ${invoice.invoiceNumber}</title>
+  <style>
+    @page { size: 80mm auto; margin: 4mm; }
+    body {
+      font-family: 'Courier New', Courier, monospace;
+      width: 72mm;
+      margin: 0 auto;
+      padding: 2mm 0;
+      color: #000;
+      font-size: 11px;
+      line-height: 1.35;
+    }
+    .center { text-align: center; }
+    .right { text-align: right; }
+    .bold { font-weight: bold; }
+    .dash { border-top: 1px dashed #000; margin: 6px 0; }
+    .double { border-top: 2px double #000; margin: 6px 0; }
+    .title { font-size: 14px; font-weight: bold; letter-spacing: 1px; }
+  </style>
+</head>
+<body>
+  <div class="center">
+    <div class="title">${rName}</div>
+    <div>${rAddr}</div>
+    <div>Tel: ${rPhone}</div>
+  </div>
+  <div class="dash"></div>
+  <div>
+    <div><b>Invoice:</b> ${invoice.invoiceNumber}</div>
+    <div><b>Order:</b> ${invoice.order?.orderNumber || 'N/A'}</div>
+    <div><b>Date:</b> ${new Date(invoice.createdAt).toLocaleString()}</div>
+    <div><b>Table:</b> ${invoice.tableName}</div>
+    <div><b>Server:</b> ${invoice.waiterName}</div>
+    <div><b>Guest:</b> ${invoice.customerName}</div>
+  </div>
+  <div class="dash"></div>
+  <div style="display: flex; justify-content: space-between; font-weight: bold; border-bottom: 1px solid #000; padding-bottom: 2px;">
+    <span>Item</span>
+    <span>Qty x Rate</span>
+    <span>Total</span>
+  </div>
+  <div style="padding-top: 4px;">
+    ${itemsHtml || '<div>No items listed</div>'}
+  </div>
+  <div class="dash"></div>
+  <div style="display: flex; justify-content: space-between;"><span>Subtotal:</span><span>$${invoice.subtotal.toFixed(2)}</span></div>
+  ${invoice.discount > 0 ? `<div style="display: flex; justify-content: space-between;"><span>Discount:</span><span>-$${invoice.discount.toFixed(2)}</span></div>` : ''}
+  <div style="display: flex; justify-content: space-between;"><span>Tax:</span><span>$${invoice.tax.toFixed(2)}</span></div>
+  <div style="display: flex; justify-content: space-between;"><span>Service Charge:</span><span>$${invoice.serviceCharge.toFixed(2)}</span></div>
+  <div class="double"></div>
+  <div style="display: flex; justify-content: space-between; font-size: 13px; font-weight: bold;"><span>GRAND TOTAL:</span><span>$${invoice.grandTotal.toFixed(2)}</span></div>
+  <div class="dash"></div>
+  <div style="display: flex; justify-content: space-between;"><span>Payment Method:</span><span>${invoice.paymentMethod}</span></div>
+  <div style="display: flex; justify-content: space-between;"><span>Amount Paid:</span><span>$${paidAmount.toFixed(2)}</span></div>
+  ${changeDue > 0 ? `<div style="display: flex; justify-content: space-between;"><span>Change:</span><span>$${changeDue.toFixed(2)}</span></div>` : ''}
+  <div style="display: flex; justify-content: space-between;"><span>Status:</span><span>${invoice.paidStatus}</span></div>
+  <div class="dash"></div>
+  <div class="center" style="margin-top: 8px;">
+    <div>*** THANK YOU FOR YOUR VISIT ***</div>
+    <div style="font-size: 9px; color: #555; margin-top: 2px;">Restaurant Smart POS</div>
+  </div>
+</body>
+</html>`;
+  };
+
+  const handleDownload = () => {
     try {
-      const token = localStorage.getItem('pos_token');
-      if (!token) {
-        setErrorMessage('Your session has expired. Please log in again.');
-        setTimeout(() => {
-          window.location.href = '/login';
-        }, 1500);
-        return;
-      }
-
-      const apiBase = getApiBaseUrl();
-      const endpoint = `${apiBase}/invoices/${invoice.id}/pdf`;
-      const response = await fetch(endpoint, {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (response.status === 401) {
-        localStorage.removeItem('pos_token');
-        localStorage.removeItem('pos_user');
-        setErrorMessage('Your session has expired. Please log in again.');
-        setTimeout(() => {
-          window.location.href = '/login';
-        }, 1500);
-        return;
-      }
-
-      if (!response.ok) {
-        throw new Error('Failed to generate invoice PDF');
-      }
-
-      const blob = await response.blob();
+      const html = generateReceiptHtml();
+      const blob = new Blob([html], { type: 'text/html' });
       const blobUrl = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = blobUrl;
@@ -62,141 +118,57 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ invoice, onClose }) 
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to download receipt');
     }
   };
 
-  const handlePrint = async () => {
+  const handlePrint = () => {
     try {
       setIsPrinting(true);
       setErrorMessage(null);
 
-      // 1. Get the authenticated JWT from existing auth mechanism
-      const token = localStorage.getItem('pos_token');
-      if (!token) {
-        setErrorMessage('Your session has expired. Please log in again.');
-        setIsPrinting(false);
+      const html = generateReceiptHtml();
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'fixed';
+      iframe.style.right = '0';
+      iframe.style.bottom = '0';
+      iframe.style.width = '0';
+      iframe.style.height = '0';
+      iframe.style.border = '0';
+      iframe.setAttribute('aria-hidden', 'true');
+      document.body.appendChild(iframe);
+
+      const doc = iframe.contentWindow?.document;
+      if (doc) {
+        doc.open();
+        doc.write(html);
+        doc.close();
+
         setTimeout(() => {
-          window.location.href = '/login';
-        }, 1500);
-        return;
-      }
-
-      // 2. Make an authenticated fetch request to GET /api/v1/invoices/:invoiceId/pdf
-      // 3. Send Authorization: Bearer <existing JWT>
-      const apiBase = getApiBaseUrl();
-      const endpoint = `${apiBase}/invoices/${invoice.id}/pdf`;
-      const response = await fetch(endpoint, {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      // 4. Authentication error handling
-      if (response.status === 401) {
-        localStorage.removeItem('pos_token');
-        localStorage.removeItem('pos_user');
-        setErrorMessage('Your session has expired. Please log in again.');
-        setIsPrinting(false);
-        setTimeout(() => {
-          window.location.href = '/login';
-        }, 1500);
-        return;
-      }
-
-      if (!response.ok) {
-        throw new Error('Failed to generate invoice PDF');
-      }
-
-      // 5. Receive the PDF / receipt HTML as a Blob
-      const blob = await response.blob();
-
-      // 6. Create a temporary Blob URL
-      const blobUrl = URL.createObjectURL(blob);
-
-      // 7. Open the Blob URL in a new browser tab/window
-      let printWindow: Window | null = null;
-      try {
-        printWindow = window.open(blobUrl, '_blank');
-      } catch (popupErr) {
-        console.warn('window.open was restricted:', popupErr);
-      }
-
-      if (printWindow) {
-        printWindow.onload = () => {
-          try {
-            printWindow?.print();
-          } catch (e) {
-            console.warn('printWindow.print error:', e);
-          }
-        };
-        // Fallback timer for browsers that do not fire onload on blob URLs
-        setTimeout(() => {
-          try {
-            printWindow?.print();
-          } catch (e) {
-            // Ignore print dialog closing
-          }
-          URL.revokeObjectURL(blobUrl);
-        }, 1000);
-      } else {
-        // If popup was blocked or in iframe container, use hidden iframe fallback
-        let printed = false;
-        const iframe = document.createElement('iframe');
-        iframe.style.position = 'fixed';
-        iframe.style.right = '0';
-        iframe.style.bottom = '0';
-        iframe.style.width = '0';
-        iframe.style.height = '0';
-        iframe.style.border = '0';
-        iframe.style.visibility = 'hidden';
-        iframe.setAttribute('aria-hidden', 'true');
-        iframe.src = blobUrl;
-
-        const cleanup = () => {
-          setTimeout(() => {
-            if (document.body.contains(iframe)) {
-              document.body.removeChild(iframe);
-            }
-            URL.revokeObjectURL(blobUrl);
-          }, 60000);
-        };
-
-        iframe.onload = () => {
           try {
             iframe.contentWindow?.focus();
             iframe.contentWindow?.print();
-            printed = true;
-          } catch (err) {
-            console.warn('Iframe print restricted, falling back to window.print():', err);
+          } catch (e) {
+            console.warn('Iframe print error, falling back to window.print():', e);
             window.print();
           } finally {
-            cleanup();
+            setTimeout(() => {
+              if (document.body.contains(iframe)) {
+                document.body.removeChild(iframe);
+              }
+              setIsPrinting(false);
+            }, 1000);
           }
-        };
-
-        iframe.onerror = () => {
-          console.warn('Iframe load error, falling back to window.print()');
-          window.print();
-          cleanup();
-        };
-
-        document.body.appendChild(iframe);
-
-        setTimeout(() => {
-          if (!printed && document.body.contains(iframe)) {
-            window.print();
-          }
-        }, 1500);
+        }, 200);
+      } else {
+        window.print();
+        setIsPrinting(false);
       }
     } catch (err: any) {
-      console.warn('Printing error, using safe print-preview fallback:', err);
-      // Safe fallback using window.print() on the loaded invoice data
+      console.warn('Printing error, falling back to window.print():', err);
       window.print();
-    } finally {
       setIsPrinting(false);
     }
   };

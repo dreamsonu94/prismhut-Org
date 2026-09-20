@@ -2,7 +2,7 @@ import axios from 'axios';
 
 // Normalizes API base URL to ensure clean handling of both relative paths and absolute domains
 export const getApiBaseUrl = (): string => {
-  const envUrl = import.meta.env.VITE_API_BASE_URL;
+  const envUrl = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL;
   if (envUrl && envUrl.trim()) {
     const trimmed = envUrl.trim().replace(/\/$/, '');
     return trimmed.endsWith('/api/v1') ? trimmed : `${trimmed}/api/v1`;
@@ -27,6 +27,7 @@ export const getApiBaseUrl = (): string => {
 
 export const api = axios.create({
   baseURL: getApiBaseUrl(),
+  timeout: 20000, // 20s network timeout prevents UI hanging indefinitely
   headers: {
     'Content-Type': 'application/json',
   },

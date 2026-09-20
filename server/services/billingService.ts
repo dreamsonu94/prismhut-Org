@@ -8,13 +8,15 @@ export interface ProcessPaymentInput {
   method: PaymentMethod;
   referenceNumber?: string;
   customerName?: string;
+  idempotencyKey?: string;
 }
 
 export class BillingService {
   /**
-   * Process payment, create invoice, and complete order
+   * Process payment, create invoice, and complete order atomically and idempotently
    */
   static async processPayment(restaurantId: string, input: ProcessPaymentInput) {
+    // 1. Initial order lookup
     const order = await prisma.order.findUnique({
       where: { id: input.orderId },
       include: {
@@ -22,42 +24,112 @@ export class BillingService {
         waiter: true,
         customer: true,
         items: { include: { menuItem: true } },
+        payments: true,
+        invoices: true,
       },
     });
 
     if (!order) {
-      throw new Error('Order not found');
+      const err: any = new Error('Order not found');
+      err.code = 'ORDER_NOT_FOUND';
+      throw err;
     }
 
-    if (order.status === OrderStatus.COMPLETED) {
-      throw new Error('Order is already settled and completed');
+    if (input.amount <= 0) {
+      const err: any = new Error('Payment amount must be greater than zero');
+      err.code = 'INVALID_AMOUNT';
+      throw err;
+    }
+
+    // 2. Idempotency Check: if order is already settled or paid, return existing invoice safely
+    const existingPaid =
+      order.status === OrderStatus.COMPLETED ||
+      order.invoices.length > 0 ||
+      order.payments.some((p) => p.status === PaymentStatus.PAID);
+
+    if (existingPaid) {
+      const existingInvoice = await prisma.invoice.findFirst({
+        where: { orderId: order.id },
+        include: {
+          restaurant: true,
+          order: {
+            include: {
+              items: { include: { menuItem: true } },
+              payments: true,
+              table: true,
+              waiter: true,
+              customer: true,
+            },
+          },
+        },
+      });
+
+      const existingPayment =
+        order.payments.find((p) => p.status === PaymentStatus.PAID) || order.payments[0];
+
+      // Ensure table is released to AVAILABLE if not already
+      if (order.tableId) {
+        try {
+          await prisma.table.update({
+            where: { id: order.tableId },
+            data: { status: TableStatus.AVAILABLE },
+          });
+          const updatedTable = await prisma.table.findUnique({ where: { id: order.tableId } });
+          if (updatedTable) emitEvent('table.updated', updatedTable);
+        } catch (tableErr) {
+          console.warn('Table release warning on duplicate payment:', tableErr);
+        }
+      }
+
+      return {
+        payment: existingPayment,
+        invoice: existingInvoice,
+        updatedOrder: existingInvoice?.order || order,
+        isDuplicate: true,
+      };
     }
 
     const restaurant = await prisma.restaurant.findUnique({ where: { id: restaurantId } });
     const invoicePrefix = restaurant?.invoicePrefix || 'INV-';
 
-    const result = await prisma.$transaction(async (tx) => {
-      // 1. Create Payment
-      const payment = await tx.payment.create({
+    // Generate Invoice Number fast without slow full-table count
+    const lastInvoice = await prisma.invoice.findFirst({
+      where: { restaurantId },
+      orderBy: { createdAt: 'desc' },
+      select: { invoiceNumber: true },
+    });
+
+    let nextSeq = 1001;
+    if (lastInvoice?.invoiceNumber) {
+      const match = lastInvoice.invoiceNumber.match(/(\d+)$/);
+      if (match) {
+        nextSeq = parseInt(match[1], 10) + 1;
+      }
+    }
+    let invoiceNumber = `${invoicePrefix}${String(nextSeq).padStart(4, '0')}`;
+
+    // Check collision just in case
+    const existingInvoice = await prisma.invoice.findUnique({ where: { invoiceNumber } });
+    if (existingInvoice) {
+      invoiceNumber = `${invoicePrefix}${Date.now().toString().slice(-6)}`;
+    }
+
+    console.log(`[BillingService] Database transaction starting for order: ${order.orderNumber} | Target Invoice: ${invoiceNumber}`);
+    const txStart = Date.now();
+
+    // 3. Execute Atomic Batch Transaction (Compatible with PgBouncer / Supabase Transaction Pooler)
+    const [payment, invoice, updatedOrder] = await prisma.$transaction([
+      prisma.payment.create({
         data: {
           orderId: order.id,
           amount: input.amount,
           method: input.method,
-          referenceNumber: input.referenceNumber || null,
+          referenceNumber: input.referenceNumber || input.idempotencyKey || null,
           status: PaymentStatus.PAID,
           paidAt: new Date(),
         },
-      });
-
-      // 2. Generate Invoice
-      const invoiceCount = await tx.invoice.count({ where: { restaurantId } });
-      let invoiceNumber = `${invoicePrefix}${String(invoiceCount + 1001).padStart(4, '0')}`;
-      const existingInvoice = await tx.invoice.findUnique({ where: { invoiceNumber } });
-      if (existingInvoice) {
-        invoiceNumber = `${invoicePrefix}${Date.now().toString().slice(-6)}`;
-      }
-
-      const invoice = await tx.invoice.create({
+      }),
+      prisma.invoice.create({
         data: {
           restaurantId,
           orderId: order.id,
@@ -70,13 +142,23 @@ export class BillingService {
           paymentMethod: input.method,
           paidStatus: PaymentStatus.PAID,
           customerName: input.customerName || order.customer?.name || 'Valued Guest',
-          tableName: order.table ? order.table.tableName : 'Takeaway',
+          tableName: order.table ? (order.table.tableName || order.table.tableNumber) : 'Takeaway',
           waiterName: order.waiter ? order.waiter.name : 'Staff',
         },
-      });
-
-      // 3. Mark Order as COMPLETED
-      const updatedOrder = await tx.order.update({
+        include: {
+          restaurant: true,
+          order: {
+            include: {
+              items: { include: { menuItem: true } },
+              payments: true,
+              table: true,
+              waiter: true,
+              customer: true,
+            },
+          },
+        },
+      }),
+      prisma.order.update({
         where: { id: order.id },
         data: { status: OrderStatus.COMPLETED },
         include: {
@@ -87,48 +169,54 @@ export class BillingService {
           payments: true,
           invoices: true,
         },
-      });
-
-      // 4. Mark Table as CLEANING
-      if (order.tableId) {
-        await tx.table.update({
-          where: { id: order.tableId },
-          data: { status: TableStatus.CLEANING },
-        });
-      }
-
-      // 5. Audit Log
-      await tx.auditLog.create({
+      }),
+      ...(order.tableId
+        ? [
+            prisma.table.update({
+              where: { id: order.tableId },
+              data: { status: TableStatus.AVAILABLE },
+            }),
+          ]
+        : []),
+      prisma.auditLog.create({
         data: {
           restaurantId,
           action: 'PAYMENT_COMPLETED',
           entity: 'ORDER',
           entityId: order.id,
           details: JSON.stringify({
-            paymentId: payment.id,
             invoiceNumber,
             amount: input.amount,
             method: input.method,
+            referenceNumber: input.referenceNumber || null,
           }),
         },
+      }),
+    ]);
+
+    const txElapsed = Date.now() - txStart;
+    console.log(`[BillingService] Database transaction committed successfully in ${txElapsed}ms`);
+    console.log(`[BillingService] Payment created (ID: ${payment.id}) | Invoice created (${invoice.invoiceNumber}) | Order completed (${updatedOrder.orderNumber}) | Table released: ${order.table?.tableNumber || 'N/A'}`);
+
+    // 4. Non-blocking real-time events outside the transaction
+    try {
+      emitEvent('payment.completed', {
+        orderId: order.id,
+        invoice,
+        payment,
       });
+      emitEvent('order.updated', updatedOrder);
 
-      return { payment, invoice, updatedOrder };
-    });
-
-    // Real-time events
-    emitEvent('payment.completed', {
-      orderId: order.id,
-      invoice: result.invoice,
-      payment: result.payment,
-    });
-    emitEvent('order.updated', result.updatedOrder);
-
-    if (order.tableId) {
-      const updatedTable = await prisma.table.findUnique({ where: { id: order.tableId } });
-      emitEvent('table.updated', updatedTable);
+      if (order.tableId) {
+        const updatedTable = await prisma.table.findUnique({ where: { id: order.tableId } });
+        if (updatedTable) {
+          emitEvent('table.updated', updatedTable);
+        }
+      }
+    } catch (eventErr) {
+      console.warn('[BillingService] Realtime event emission warning:', eventErr);
     }
 
-    return result;
+    return { payment, invoice, updatedOrder, isDuplicate: false };
   }
 }

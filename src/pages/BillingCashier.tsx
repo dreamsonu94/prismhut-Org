@@ -15,6 +15,8 @@ import {
   Search,
   Printer,
   Sparkles,
+  AlertCircle,
+  Loader2,
 } from 'lucide-react';
 
 export const BillingCashier: React.FC = () => {
@@ -27,6 +29,7 @@ export const BillingCashier: React.FC = () => {
   const [customerName, setCustomerName] = useState<string>('Guest');
   const [referenceNumber, setReferenceNumber] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [paymentError, setPaymentError] = useState<string | null>(null);
 
   // Invoice modal
   const [settledInvoice, setSettledInvoice] = useState<Invoice | null>(null);
@@ -36,12 +39,23 @@ export const BillingCashier: React.FC = () => {
     queryKey: ['orders', 'unpaid'],
     queryFn: async () => {
       const res = await api.get('/orders');
-      const allOrders = res.data?.data as Order[];
-      return allOrders.filter((o) =>
-        ['CONFIRMED', 'PREPARING', 'READY', 'SERVED'].includes(o.status)
-      );
+      const allOrders = (res.data?.data || []) as Order[];
+      return allOrders.filter((o) => {
+        // Exclude cancelled and completed orders
+        if (o.status === 'COMPLETED' || o.status === 'CANCELLED') return false;
+        // Exclude orders with an invoice
+        if ((o as any).invoices && (o as any).invoices.length > 0) return false;
+        // Exclude orders already fully paid
+        if (o.payments && o.payments.length > 0) {
+          const totalPaid = o.payments
+            .filter((p) => p.status === 'PAID')
+            .reduce((sum, p) => sum + (p.amount || 0), 0);
+          if (totalPaid >= o.grandTotal - 0.01) return false;
+        }
+        return ['CONFIRMED', 'PREPARING', 'READY', 'SERVED'].includes(o.status);
+      });
     },
-    refetchInterval: 5000,
+    refetchInterval: 3000,
   });
 
   const selectedOrder = orders?.find((o) => o.id === selectedOrderId);
@@ -52,6 +66,7 @@ export const BillingCashier: React.FC = () => {
   }, [searchParams]);
 
   useEffect(() => {
+    setPaymentError(null);
     if (selectedOrder) {
       setReceivedAmount(selectedOrder.grandTotal.toFixed(2));
       setCustomerName(selectedOrder.customer?.name || 'Walk-in Guest');
@@ -61,23 +76,50 @@ export const BillingCashier: React.FC = () => {
   const processPaymentMutation = useMutation({
     mutationFn: async () => {
       if (!selectedOrder) throw new Error('No order selected');
+      setPaymentError(null);
 
-      const res = await api.post('/payments', {
-        orderId: selectedOrder.id,
-        amount: Number(receivedAmount) || selectedOrder.grandTotal,
-        method: paymentMethod,
-        referenceNumber: referenceNumber || undefined,
-        customerName: customerName || 'Valued Guest',
-      });
-      return res.data?.data;
+      const idempotencyKey = `pos-pay-${selectedOrder.id}-${Date.now()}`;
+      const res = await api.post(
+        '/payments',
+        {
+          orderId: selectedOrder.id,
+          amount: Number(receivedAmount) || selectedOrder.grandTotal,
+          method: paymentMethod,
+          referenceNumber: referenceNumber || undefined,
+          customerName: customerName || 'Valued Guest',
+          idempotencyKey,
+        },
+        {
+          headers: {
+            'x-idempotency-key': idempotencyKey,
+          },
+        }
+      );
+      return res.data?.data || res.data;
     },
     onSuccess: (data) => {
-      setSettledInvoice(data.invoice);
+      setPaymentError(null);
+      const invoice = data?.invoice || data?.receipt || data?.data?.invoice;
+      if (invoice) {
+        setSettledInvoice(invoice);
+      }
       setSelectedOrderId('');
       setReferenceNumber('');
+      setReceivedAmount('');
       queryClient.invalidateQueries({ queryKey: ['orders'] });
       queryClient.invalidateQueries({ queryKey: ['tables'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['invoices'] });
+      queryClient.invalidateQueries({ queryKey: ['payments'] });
+    },
+    onError: (err: any) => {
+      const msg =
+        err.code === 'ECONNABORTED'
+          ? 'Network timeout: Payment response took longer than 20 seconds. Please check pending bills or refresh.'
+          : err.response?.data?.error?.message ||
+            err.message ||
+            'Payment failed. Please verify and try again.';
+      setPaymentError(msg);
     },
   });
 
@@ -371,14 +413,36 @@ export const BillingCashier: React.FC = () => {
                   </div>
                 </div>
 
+                {/* Error Banner */}
+                {paymentError && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-xl flex items-start gap-2 text-xs text-red-700">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-red-500 mt-0.5" />
+                    <div className="flex-1 font-medium">{paymentError}</div>
+                    <button
+                      type="button"
+                      onClick={() => setPaymentError(null)}
+                      className="text-red-400 hover:text-red-600 font-bold ml-1 text-sm leading-none"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+
                 {/* Settle Action Button */}
                 <button
+                  type="button"
                   onClick={() => processPaymentMutation.mutate()}
-                  disabled={processPaymentMutation.isPending || (Number(receivedAmount) || 0) < selectedOrder.grandTotal}
-                  className="w-full py-3.5 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-sm font-black shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 transition-all"
+                  disabled={
+                    processPaymentMutation.isPending ||
+                    (Number(receivedAmount) || 0) < selectedOrder.grandTotal
+                  }
+                  className="w-full py-3.5 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-sm font-black shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 transition-all cursor-pointer disabled:cursor-not-allowed"
                 >
                   {processPaymentMutation.isPending ? (
-                    <span>Settling in PostgreSQL & Generating Invoice...</span>
+                    <span className="flex items-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Settling in PostgreSQL & Generating Invoice...</span>
+                    </span>
                   ) : (
                     <>
                       <CheckCircle2 className="w-4 h-4" />

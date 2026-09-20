@@ -13,6 +13,7 @@ const processPaymentSchema = z.object({
   method: z.nativeEnum(PaymentMethod).default(PaymentMethod.CASH),
   referenceNumber: z.string().optional(),
   customerName: z.string().optional(),
+  idempotencyKey: z.string().optional(),
 });
 
 // GET /api/v1/payments
@@ -70,14 +71,39 @@ router.post('/', requireAuth, async (req: AuthenticatedRequest, res) => {
     }
 
     const restaurantId = req.user!.restaurantId;
-    const result = await BillingService.processPayment(restaurantId, parseResult.data);
+    const idempotencyKey =
+      (req.headers['x-idempotency-key'] as string) || parseResult.data.idempotencyKey;
 
-    return res.status(201).json({
+    const result = await BillingService.processPayment(restaurantId, {
+      ...parseResult.data,
+      idempotencyKey,
+    });
+
+    const statusCode = result.isDuplicate ? 200 : 201;
+    return res.status(statusCode).json({
       success: true,
       data: result,
+      payment: result.payment,
+      invoice: result.invoice,
+      order: result.updatedOrder,
+      table: result.updatedOrder?.table,
+      receipt: result.invoice,
+      ...(result.isDuplicate && { message: 'Order was already settled' }),
     });
   } catch (error: any) {
     console.error('Payment processing error:', error);
+    if (error.code === 'ORDER_NOT_FOUND') {
+      return res.status(404).json({
+        success: false,
+        error: { code: 'ORDER_NOT_FOUND', message: error.message || 'Order not found' },
+      });
+    }
+    if (error.code === 'INVALID_AMOUNT') {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_AMOUNT', message: error.message || 'Invalid payment amount' },
+      });
+    }
     return res.status(500).json({
       success: false,
       error: { code: 'PAYMENT_FAILED', message: error.message || 'Payment processing failed' },

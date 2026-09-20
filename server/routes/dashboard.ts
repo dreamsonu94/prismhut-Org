@@ -20,15 +20,36 @@ router.get('/stats', requireAuth, async (req: AuthenticatedRequest, res) => {
     const todayOrders = await prisma.order.findMany({
       where: {
         restaurantId,
-        createdAt: { gte: startOfToday, lte: endOfToday },
+        OR: [
+          { createdAt: { gte: startOfToday, lte: endOfToday } },
+          { updatedAt: { gte: startOfToday, lte: endOfToday } },
+        ],
+      },
+      include: {
+        payments: true,
       },
     });
 
     const completedTodayOrders = todayOrders.filter((o) => o.status === OrderStatus.COMPLETED);
-    const todaySales = completedTodayOrders.reduce((sum, o) => sum + o.grandTotal, 0);
+
+    // Sum of all settled payments today
+    const todayPayments = await prisma.payment.findMany({
+      where: {
+        order: { restaurantId },
+        status: 'PAID',
+        paidAt: { gte: startOfToday, lte: endOfToday },
+      },
+    });
+
+    const paymentSales = todayPayments.reduce((sum, p) => sum + p.amount, 0);
+    const orderSales = completedTodayOrders.reduce((sum, o) => sum + o.grandTotal, 0);
+    const todaySales = Math.round(Math.max(paymentSales, orderSales) * 100) / 100;
+
     const todayOrdersCount = todayOrders.length;
-    const pendingOrdersCount = todayOrders.filter((o) =>
-      ['DRAFT', 'CONFIRMED', 'PREPARING', 'READY'].includes(o.status)
+    const pendingOrdersCount = todayOrders.filter(
+      (o) =>
+        ['DRAFT', 'CONFIRMED', 'PREPARING', 'READY'].includes(o.status) &&
+        !o.payments.some((p) => p.status === 'PAID')
     ).length;
     const completedOrdersCount = completedTodayOrders.length;
     const cancelledOrdersCount = todayOrders.filter((o) => o.status === OrderStatus.CANCELLED).length;

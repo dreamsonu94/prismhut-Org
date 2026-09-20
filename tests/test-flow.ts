@@ -110,7 +110,7 @@ async function runTests() {
   });
 
   console.log(`✓ Payment Processed: ${paymentResult.payment.method} ($${paymentResult.payment.amount})`);
-  console.log(`✓ Invoice Generated: ${paymentResult.invoice.invoiceNumber}`);
+  console.log(`✓ Invoice Generated: ${paymentResult.invoice?.invoiceNumber}`);
   console.log(`✓ Order Status: ${paymentResult.updatedOrder.status}`);
 
   const postTable = await prisma.table.findUnique({ where: { id: table.id } });

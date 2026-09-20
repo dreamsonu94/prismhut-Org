@@ -29,10 +29,15 @@ const createOrderSchema = z.object({
 router.get('/', requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
     const restaurantId = req.user!.restaurantId;
-    const { status, tableId, date } = req.query;
+    const { status, tableId, date, unpaid } = req.query;
 
     const where: any = { restaurantId };
-    if (status) where.status = status as OrderStatus;
+    if (unpaid === 'true') {
+      where.status = { notIn: [OrderStatus.COMPLETED, OrderStatus.CANCELLED] };
+      where.payments = { none: { status: 'PAID' } };
+    } else if (status) {
+      where.status = status as OrderStatus;
+    }
     if (tableId) where.tableId = String(tableId);
     if (date) {
       const start = new Date(String(date));
@@ -52,6 +57,7 @@ router.get('/', requireAuth, async (req: AuthenticatedRequest, res) => {
         kots: { select: { id: true, kotNumber: true, status: true } },
         bots: { select: { id: true, botNumber: true, status: true } },
         payments: true,
+        invoices: true,
       },
       orderBy: { createdAt: 'desc' },
       take: 100,

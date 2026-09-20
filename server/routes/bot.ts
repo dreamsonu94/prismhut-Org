@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../db/prisma.js';
 import { requireAuth, AuthenticatedRequest } from '../middleware/auth.js';
 import { emitEvent } from '../socket/index.js';
-import { TicketStatus } from '@prisma/client';
+import { TicketStatus, OrderStatus } from '@prisma/client';
 
 const router = Router();
 
@@ -102,7 +102,11 @@ const updateBotStatus = async (id: string, newStatus: TicketStatus, res: any) =>
           where: { id: updated.orderId },
           include: { kots: true, bots: true },
         });
-        if (order) {
+        if (
+          order &&
+          order.status !== OrderStatus.COMPLETED &&
+          order.status !== OrderStatus.CANCELLED
+        ) {
           const allTicketsReadyOrServed = [...order.kots, ...order.bots].every(
             (t) => t.status === TicketStatus.READY || t.status === TicketStatus.SERVED
           );
