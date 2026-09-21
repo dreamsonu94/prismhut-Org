@@ -2,9 +2,10 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
 import { requireAuth, AuthenticatedRequest } from '../middleware/auth.js';
+import { requireRole } from '../middleware/rbac.js';
 import { OrderService } from '../services/orderService.js';
 import { emitEvent } from '../socket/index.js';
-import { OrderStatus, TableStatus } from '@prisma/client';
+import { OrderStatus, TableStatus, RoleType } from '@prisma/client';
 
 const router = Router();
 
@@ -266,7 +267,11 @@ router.post('/:id/items', requireAuth, async (req: AuthenticatedRequest, res) =>
 });
 
 // POST /api/v1/orders/:id/cancel
-router.post('/:id/cancel', requireAuth, async (req: AuthenticatedRequest, res) => {
+router.post(
+  '/:id/cancel',
+  requireAuth,
+  requireRole([RoleType.ADMIN, RoleType.MANAGER, RoleType.CASHIER]),
+  async (req: AuthenticatedRequest, res) => {
   try {
     const { id } = req.params;
     const order = await prisma.order.findUnique({ where: { id } });

@@ -8,14 +8,7 @@ export const getApiBaseUrl = (): string => {
     return trimmed.endsWith('/api/v1') ? trimmed : `${trimmed}/api/v1`;
   }
 
-  // If in browser and explicitly running on Vercel deployment
-  if (typeof window !== 'undefined') {
-    const host = window.location.hostname;
-    if (host.includes('vercel.app')) {
-      return 'https://prismhut-org.onrender.com/api/v1';
-    }
-  }
-
+  // Fallback for same-origin or reverse-proxy deployments
   return '/api/v1';
 };
 

@@ -1,4 +1,4 @@
-# Production Deployment Checklist & Infrastructure Guide
+# Production Deployment & Infrastructure Guide
 
 **Restaurant Smart POS** — Enterprise Production Architecture & Deployment Playbook.
 
@@ -8,207 +8,187 @@
 
 The system operates on a high-availability, decoupled production architecture:
 
-| Component | Technology | Production Host | Ingress / Port |
+| Component | Technology | Target Host | Port / Ingress |
 | :--- | :--- | :--- | :--- |
-| **Frontend** | React 19, TypeScript, Vite, Tailwind CSS | Unified Container / Vercel Edge CDN | HTTPS (443) |
-| **Backend API** | Node.js, Express, Socket.IO | Cloud Run / Render / Container | Port 3000 (`HOST 0.0.0.0`) |
+| **Frontend** | React 19, TypeScript, Vite, Tailwind CSS | Vercel Edge CDN | HTTPS (443) |
+| **Backend API** | Node.js, Express, Socket.IO | Render Web Service | Port 3000 / $PORT (`HOST 0.0.0.0`) |
 | **Database** | PostgreSQL | Supabase Managed Cloud DB | Port 6543 (Pooler) / 5432 (Direct) |
-| **ORM / Migrations** | Prisma ORM v5.22.0 | Automated CI/CD | Controlled additive migrations (`prisma migrate deploy`) |
+| **ORM / Client** | Prisma ORM v5.22.0 | Automated CI/CD | Controlled additive migrations |
 
 ---
 
-## 2. Prerequisites
+## 2. Environment Variable Matrix
 
-Before initiating production deployment, verify:
-- [ ] Active PostgreSQL database instance (Supabase or AWS RDS) with SSL enabled.
-- [ ] Direct connection URI (`DIRECT_URL`) and Connection Pooler URI (`DATABASE_URL` with `?pgbouncer=true`).
-- [ ] Cryptographic 64+ character secret for JWT signing (`JWT_SECRET`).
-- [ ] Verified Node.js runtime environment (>= 20.0.0).
-- [ ] Automated database backup taken before running schema changes.
+| Variable Name | Required | Target Platform | Purpose | Example / Placeholder |
+| :--- | :---: | :--- | :--- | :--- |
+| `DATABASE_URL` | **Yes** | Backend (Render) | PostgreSQL connection pooler (port 6543 / PgBouncer) | `postgresql://postgres.[ref]:[pass]@aws-0-[region].pooler.supabase.com:6543/postgres?pgbouncer=true` |
+| `DIRECT_URL` | **Yes** | Backend (Render) | Direct DB connection for Prisma migrations (port 5432) | `postgresql://postgres:[pass]@db.[ref].supabase.co:5432/postgres` |
+| `JWT_SECRET` | **Yes** | Backend (Render) | Cryptographic signing key for Auth JWT tokens (64+ chars) | `replace_with_a_secure_random_64_character_string_for_production` |
+| `CORS_ORIGIN` | **Yes** | Backend (Render) | Allowed frontend URL for CORS & Socket.IO handshake | `https://YOUR-VERCEL-FRONTEND-URL` |
+| `CORS_ORIGINS` | Optional | Backend (Render) | Comma-separated list if multiple domains are allowed | `https://YOUR-VERCEL-FRONTEND-URL,https://waiter.yourdomain.com` |
+| `CLIENT_URL` | Optional | Backend (Render) | Alias for frontend origin | `https://YOUR-VERCEL-FRONTEND-URL` |
+| `NODE_ENV` | **Yes** | Backend (Render) | Production runtime mode | `production` |
+| `PORT` | Optional | Backend (Render) | Server port (Render automatically provides $PORT) | `3000` |
+| `HOST` | Optional | Backend (Render) | Server host binding | `0.0.0.0` |
+| `VITE_API_BASE_URL` | **Yes** | Frontend (Vercel) | Backend API Base URL | `https://YOUR-RENDER-BACKEND-URL` |
+| `VITE_WS_URL` | Optional | Frontend (Vercel) | Socket.IO WebSocket Server URL (defaults to backend origin) | `https://YOUR-RENDER-BACKEND-URL` |
 
----
-
-## 3. Production Environment Variables
-
-Configure these variables strictly within the deployment platform's secret manager (Render, Cloud Run, Vercel, Railway). **Never commit actual values to git.**
-
-### Backend & Database (Server-Only Secrets)
-```env
-# Database connection pooler (Supavisor / PgBouncer on port 6543)
-DATABASE_URL="postgresql://postgres.[project-ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres?pgbouncer=true"
-
-# Direct database connection for running Prisma migrations (port 5432)
-DIRECT_URL="postgresql://postgres:[password]@db.[project-ref].supabase.co:5432/postgres"
-
-# Production JWT secret key (64+ characters)
-JWT_SECRET="replace_with_a_secure_random_64_character_string_for_production"
-
-# CORS configuration: comma-separated list of allowed frontend origins (No wildcards with credentials)
-CORS_ORIGINS="https://pos.myrestaurant.com"
-CLIENT_URL="https://pos.myrestaurant.com"
-
-# Server runtime settings
-NODE_ENV="production"
-PORT="3000"
-HOST="0.0.0.0"
-```
-
-### Frontend Client (Vite Injected at Build Time)
-```env
-# Production API Base URL (relative '/api/v1' for unified container, or absolute for split domains)
-VITE_API_BASE_URL="https://prismhut-org.onrender.com"
-
-# Optional WebSocket URL for Socket.IO
-VITE_WS_URL="https://prismhut-org.onrender.com"
-```
+> ⚠️ **CRITICAL SECURITY RULE**: Never put `DATABASE_URL`, `DIRECT_URL`, or `JWT_SECRET` into Vercel or any client-side configuration.
 
 ---
 
-## 4. Database Setup & Prisma Migration
+## 3. Database Setup & Supabase Configuration
 
-### Production Migration Strategy
-In production, database migrations must be **additive, non-destructive, and strictly versioned**.
-
-1. **Pre-Migration Safety Backup**:
-   ```bash
-   # Export pre-migration logical backup
-   pg_dump -h db.[project-ref].supabase.co -U postgres -d postgres -F c -b -v -f "pre-migration-$(date +%Y%m%d_%H%M%S).dump"
-   ```
-
-2. **Run Applied Migrations**:
-   Execute the official safe migration command in CI/CD or build pipeline:
+1. **Create Supabase Project**:
+   - Go to [Supabase](https://supabase.com), create or open your project in your target cloud region.
+2. **Retrieve Connection Strings**:
+   - **Database Settings -> Connection string -> URI**:
+     - Mode: **Transaction** (Port 6543) -> Copy this as `DATABASE_URL` with `?pgbouncer=true`.
+     - Mode: **Session** (Port 5432) -> Copy this as `DIRECT_URL`.
+3. **Run Prisma Migrations**:
    ```bash
    npx prisma migrate deploy
    ```
-   > **CRITICAL**: Never use `npx prisma db push --force-reset` or `npx prisma migrate reset` in production, as these drop existing restaurant orders, tables, and financial records.
-
-3. **Verify Migration Status**:
+   *(Or `npx prisma db push` if initializing a clean schema)*
+4. **Seed Database (Initial Roles & Admin Account)**:
    ```bash
-   npx prisma migrate status
+   node dist/scripts/seed.cjs
    ```
+   *(Creates Super Admin, Admin, Manager, Cashier, Waiter, Kitchen, Bar roles, sections, tables, and menu)*
 
 ---
 
-## 5. Backend Deployment
+## 4. Backend Deployment (Render)
 
-### Build & Start Commands
-- **Build Command**:
+1. **Create Web Service**:
+   - Sign in to [Render Dashboard](https://dashboard.render.com).
+   - Click **New -> Web Service** and connect your Git repository.
+2. **Service Settings**:
+   - **Name**: `restaurant-pos-api` (or your preferred name)
+   - **Environment**: `Node`
+   - **Region**: Choose the region closest to your Supabase PostgreSQL instance.
+   - **Branch**: `main` (or production branch)
+   - **Root Directory**: Leave blank (repo root)
+   - **Build Command**:
+     ```bash
+     npm install && npx prisma generate && npm run build:server
+     ```
+   - **Start Command**:
+     ```bash
+     npm start
+     ```
+     *(Runs `node dist/server.cjs`)*
+3. **Add Environment Variables in Render**:
+   - `NODE_ENV`: `production`
+   - `DATABASE_URL`: *(Your Supabase transaction pooler URL)*
+   - `DIRECT_URL`: *(Your Supabase direct connection URL)*
+   - `JWT_SECRET`: *(Your 64+ char random secret)*
+   - `CORS_ORIGIN`: `https://YOUR-VERCEL-FRONTEND-URL`
+4. **Deploy & Note Generated Backend URL**:
+   - Click **Create Web Service**. Once Render creates and provisions the service, it will assign your unique backend URL (e.g. `https://<your-service-name>.onrender.com`).
+   - Copy this assigned URL to configure `VITE_API_BASE_URL` and `VITE_WS_URL` in Vercel.
+
+---
+
+## 5. Frontend Deployment (Vercel)
+
+1. **Import Project into Vercel**:
+   - Go to [Vercel Dashboard](https://vercel.com).
+   - Click **Add New -> Project** and import your Git repository.
+2. **Project Configuration**:
+   - **Framework Preset**: `Vite`
+   - **Root Directory**: `./` (repo root)
+   - **Build Command**: `npm run build`
+   - **Output Directory**: `dist`
+3. **Add Environment Variables in Vercel**:
+   - `VITE_API_BASE_URL`: `https://YOUR-RENDER-BACKEND-URL`
+   - `VITE_WS_URL`: `https://YOUR-RENDER-BACKEND-URL`
+4. **Deploy**:
+   - Click **Deploy**.
+   - Note your Vercel URL (e.g. `https://restaurant-pos.vercel.app`).
+5. **CORS Loop Closure**:
+   - Return to your **Render** backend service environment settings.
+   - Set `CORS_ORIGIN` to your exact Vercel URL:
+     ```env
+     CORS_ORIGIN=https://restaurant-pos.vercel.app
+     ```
+   - Save changes (Render will automatically redeploy with the updated CORS whitelist).
+
+---
+
+## 6. API Cutover Checklist
+
+- [ ] **Step 1: Backend Health Check**
+  Verify backend API is responsive and database is connected:
   ```bash
-  npm install && npx prisma generate && npm run build:server
+  curl -i https://YOUR-RENDER-BACKEND-URL/api/v1/health
   ```
-- **Start Command**:
+  Expected: HTTP 200 with `{"status":"healthy","database":"connected"}`.
+
+- [ ] **Step 2: CORS Pre-Flight Verification**
+  Test OPTIONS pre-flight from your Vercel domain:
   ```bash
-  npm start
+  curl -i -X OPTIONS https://YOUR-RENDER-BACKEND-URL/api/v1/health \
+    -H "Origin: https://YOUR-VERCEL-FRONTEND-URL" \
+    -H "Access-Control-Request-Method: GET"
   ```
-  *(Executes `node dist/server.cjs`)*
+  Expected: HTTP 204 or 200 with `Access-Control-Allow-Origin: https://YOUR-VERCEL-FRONTEND-URL` and `Access-Control-Allow-Credentials: true`.
 
-### Container / Server Configuration
-- Port binding: `process.env.PORT || 3000`
-- Host binding: `0.0.0.0`
-- Health check path: `/health` and `/api/v1/health`
-- Graceful shutdown handlers installed for `SIGTERM` and `SIGINT`.
+- [ ] **Step 3: Frontend API Connection**
+  Open the frontend application in the browser and check Developer Tools Console:
+  - No CORS errors.
+  - WebSocket connection established (`[Socket.IO] Connected to POS live server`).
 
----
-
-## 6. Frontend Deployment
-
-### Unified Container Deployment (Default & Recommended)
-Express statically serves `dist/index.html` and assets compiled by `vite build`. All `/api/v1/*` routes take precedence over the SPA catch-all route.
-
-### Split Deployment (e.g. Vercel)
-When deploying the frontend to Vercel and backend to Render:
-1. Ensure `vercel.json` rewrites `/api/:path*` to the Render backend.
-2. Verify `VITE_API_BASE_URL` points to `https://prismhut-org.onrender.com`.
-3. Verify Render CORS allows the Vercel domain (`https://*.vercel.app` or custom domain).
+- [ ] **Step 4: Authentication Verification**
+  - Sign in as Admin (`admin` / `admin123`).
+  - Verify JWT token is stored securely and sent in `Authorization: Bearer <token>` header.
 
 ---
 
-## 7. CORS Configuration Verification
+## 7. Production Smoke Testing Suite
 
-1. Backend checks `CORS_ORIGINS` / `CLIENT_URL`.
-2. When credentials (`Authorization: Bearer <token>`) are enabled, `Access-Control-Allow-Origin: *` is **prohibited** by web standards. The server strictly reflects the authorized origin.
-3. Pre-flight `OPTIONS` requests are handled automatically with HTTP 204.
+Post-cutover verification steps across all POS roles and business workflows:
 
----
-
-## 8. Health Check & Monitoring
-
-### Health Endpoint Specification
-```http
-GET /api/v1/health
-```
-
-**Expected Healthy Response (HTTP 200)**:
-```json
-{
-  "success": true,
-  "service": "Restaurant Smart POS API",
-  "status": "healthy",
-  "database": "connected",
-  "latencyMs": 12,
-  "uptimeSeconds": 1420,
-  "timestamp": "2026-09-21T08:40:00.000Z",
-  "version": "1.0.0"
-}
-```
-
-**Degraded Response (HTTP 503)**:
-```json
-{
-  "success": false,
-  "service": "Restaurant Smart POS API",
-  "status": "degraded",
-  "database": "disconnected",
-  "error": {
-    "code": "DATABASE_UNAVAILABLE",
-    "message": "Could not connect to PostgreSQL database"
-  }
-}
-```
+1. **API Health & DB Latency**: Verify `/api/v1/health` responds under 100ms.
+2. **Role & RBAC Security**:
+   - Admin (`admin`): Full dashboard, menu management, reports, audit logs.
+   - Manager (`manager`): Table floor, orders, KDS, BDS, billing, reports.
+   - Cashier (`cashier`): Orders, bill settlement, receipt printing. Denied access to audit logs and user management.
+   - Waiter (`waiter`): Table seating, POS ordering, KOT/BOT submission. Denied access to payment settlement and invoice cancellation.
+3. **Table Floor & Real-Time Sync**:
+   - Change table status or seat guests. Verify Socket.IO updates floor plan across open tabs without browser refresh.
+4. **POS Ordering Flow**:
+   - Create a dine-in order for Table 1.
+   - Add items from Kitchen and Bar categories.
+   - Submit order.
+5. **KDS & BDS Routing**:
+   - Verify food items appear on Kitchen Display System (KDS).
+   - Verify beverage items appear on Bar Display System (BDS).
+   - Advance ticket status: `ACCEPTED` -> `PREPARING` -> `READY`.
+6. **Billing & Payment Settlement**:
+   - Open billing modal for the occupied table.
+   - Apply discount/tax verification.
+   - Settle payment via Cash / Card / QR / Bank Transfer.
+   - Confirm atomic transaction: payment is recorded, invoice is generated, and table is automatically released (`AVAILABLE`).
+   - Confirm duplicate settlement is rejected via idempotency check.
+7. **80mm Thermal Receipt Generation**:
+   - Open print receipt preview. Verify formatted 80mm thermal receipt layout with restaurant logo, tax breakdown, and footer.
+8. **Reports & Audit Trail**:
+   - Open Reports dashboard. Verify today's sales and payment breakdowns reflect settled transactions.
+   - Download CSV export.
+   - Check Audit Trail for recorded actions (`ORDER_CREATED`, `PAYMENT_PROCESSED`, `ORDER_CANCELLED`).
 
 ---
 
-## 9. Production Smoke Testing Checklist
+## 8. Rollback Plan
 
-Post-deployment smoke testing must be conducted to certify the deployment:
+### Fast Application Rollback (< 2 minutes)
+- **Vercel (Frontend)**: In the Vercel Dashboard, go to **Deployments**, find the previous stable deployment, click **... -> Instant Rollback**.
+- **Render (Backend)**: In the Render Dashboard, go to **Events / Deploys**, select the previous build, and click **Rollback to this deploy**.
 
-- [ ] **1. API Health**: Call `/api/v1/health` and verify HTTP 200 with `"database": "connected"`.
-- [ ] **2. Auth & RBAC**: Login with each role:
-  - `admin` (Alex Harrison)
-  - `manager` (Maria Santos)
-  - `cashier` (David Kim)
-  - `waiter` (Liam Walker)
-- [ ] **3. Table Floor**: Verify all tables load real-time status (`AVAILABLE`, `OCCUPIED`, `RESERVED`).
-- [ ] **4. POS Ordering**: Open table, select menu items, set modifiers, and submit order.
-- [ ] **5. KOT/BOT Generation**: Verify tickets stream to Kitchen Display System (KDS) and Bar Display System (BDS).
-- [ ] **6. Kitchen Progress**: Mark ticket items `PREPARING` and `READY`.
-- [ ] **7. Billing & Settlement**:
-  - Open Cashier / Billing modal.
-  - Process cash payment.
-  - Process card/QR payment.
-  - Verify idempotency header prevents duplicate billing.
-- [ ] **8. Receipt & Print**: Preview 80mm thermal receipt, verify tax/service calculations and print preview.
-- [ ] **9. Table Release**: Confirm table status flips back to `AVAILABLE` and pending bill clears from active register.
-- [ ] **10. Reports & Audit**: Review Daily Sales, Payment Breakdown, and Audit Logs in Reports. Verify CSV export.
-- [ ] **11. Session Logout**: Execute logout, verify tokens are cleared, and private routes redirect to `/login`.
-
----
-
-## 10. Rollback Procedure
-
-### Application Code Rollback
-1. **Container / PaaS (Render / Cloud Run)**: Re-deploy the previously tagged stable release or commit SHA.
-2. **Frontend (Vercel)**: Instant rollback to previous deployment in project history.
-
-### Database Migration Rollback Strategy
-If an additive migration introduces unexpected performance regressions:
-1. Revert application code to the prior release version that supports the previous schema state.
-2. Run targeted down-migration SQL script created specifically for the migration:
-   ```bash
-   psql -h db.[project-ref].supabase.co -U postgres -d postgres -f migrations/rollback_<version>.sql
-   ```
-3. Update `_prisma_migrations` status if needed:
-   ```bash
-   npx prisma migrate resolve --rolled-back <migration_name>
-   ```
-4. If schema was altered destructively, execute full database restore from the pre-migration snapshot.
+### Database Rollback Strategy
+- Before applying any production schema migrations, take a logical backup via Supabase Dashboard (**Database -> Backups**) or pg_dump:
+  ```bash
+  pg_dump -h db.[project-ref].supabase.co -U postgres -d postgres -F c -b -v -f "pre-deploy-backup.dump"
+  ```
+- If an additive migration must be reverted, apply the corresponding down-migration script or restore the snapshot.

@@ -60,16 +60,20 @@ async function startServer() {
   // Initialize Socket.IO
   initSocketIO(httpServer);
 
-  // Global Middlewares
+  // Global Middlewares & Security Headers
   app.use(
     helmet({
       contentSecurityPolicy: false,
       crossOriginEmbedderPolicy: false,
+      xContentTypeOptions: true,
+      xFrameOptions: false,
+      xXssProtection: true,
+      hidePoweredBy: true,
     })
   );
 
   // Production-ready CORS configuration
-  const rawOrigins = process.env.CORS_ORIGINS || process.env.CLIENT_URL || '';
+  const rawOrigins = process.env.CORS_ORIGIN || process.env.CORS_ORIGINS || process.env.CLIENT_URL || '';
   const allowedOrigins: string[] = rawOrigins
     ? rawOrigins.split(',').map((o) => o.trim()).filter(Boolean)
     : [];
@@ -80,12 +84,13 @@ async function startServer() {
         // Allow requests with no origin (e.g. mobile apps, curl, server-to-server)
         if (!origin) return callback(null, true);
 
+        // Development: allow local development origins (localhost, 127.0.0.1)
+        if (!isProduction && (origin.includes('localhost') || origin.includes('127.0.0.1'))) {
+          return callback(null, origin);
+        }
+
         // If specific allowed origins are configured, validate against them
         if (allowedOrigins.length > 0) {
-          if (allowedOrigins.includes('*')) {
-            // In production, reflect specific origin rather than wildcard '*' with credentials
-            return callback(null, isProduction ? origin : true);
-          }
           if (allowedOrigins.includes(origin)) {
             return callback(null, origin);
           }
@@ -144,7 +149,12 @@ async function startServer() {
   // Vite Integration (Middleware in Dev, Static serving in Production)
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: {
+          server: httpServer,
+        },
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -173,6 +183,37 @@ async function startServer() {
     console.log(`🔌 Socket.IO: Initialized`);
     console.log(`🗄️ Database: PostgreSQL (Supabase Connected)`);
     console.log(`=============================================`);
+  });
+
+  const gracefulShutdown = (signal: string) => {
+    console.log(`\n[Server] Received ${signal}. Initiating graceful shutdown...`);
+    httpServer.close(async () => {
+      console.log('[Server] HTTP and Socket.IO servers closed.');
+      try {
+        const { prisma } = await import('./server/db/prisma.js');
+        await prisma.$disconnect();
+        console.log('[Server] Database connections gracefully closed.');
+      } catch (err) {
+        console.error('[Server] Error disconnecting database:', err);
+      }
+      process.exit(0);
+    });
+
+    setTimeout(() => {
+      console.error('[Server] Forcefully terminating process after 10s timeout.');
+      process.exit(1);
+    }, 10000).unref();
+  };
+
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+  process.on('unhandledRejection', (reason: any) => {
+    logger.unexpectedError(reason, 'UnhandledRejection');
+  });
+
+  process.on('uncaughtException', (err: any) => {
+    logger.unexpectedError(err, 'UncaughtException');
   });
 }
 

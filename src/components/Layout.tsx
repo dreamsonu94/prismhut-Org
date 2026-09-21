@@ -3,6 +3,7 @@ import { Outlet, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.js';
 import { Header } from './Header.js';
 import { Sidebar } from './Sidebar.js';
+import { OfflineBanner } from './PWAInstallButton.js';
 
 export const Layout: React.FC = () => {
   const { user, isLoading } = useAuth();
@@ -31,6 +32,7 @@ export const Layout: React.FC = () => {
           <Outlet />
         </main>
       </div>
+      <OfflineBanner />
     </div>
   );
 };

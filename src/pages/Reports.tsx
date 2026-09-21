@@ -197,25 +197,23 @@ export const Reports: React.FC = () => {
 
   // Export CSV Handler
   const handleExportCsv = (reportType: string) => {
-    const params = new URLSearchParams();
-    params.append('range', range);
-    params.append('exportFormat', 'csv');
+    const params: Record<string, string> = {
+      range,
+      exportFormat: 'csv',
+    };
     if (range === 'custom') {
-      params.append('startDate', startDate);
-      params.append('endDate', endDate);
+      params.startDate = startDate;
+      params.endDate = endDate;
     }
-    const token = localStorage.getItem('pos_token') || '';
-    const url = `/api/v1/reports/${reportType}?${params.toString()}`;
 
-    // Trigger download with auth token
-    fetch(url, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    })
-      .then((res) => res.blob())
-      .then((blob) => {
-        const downloadUrl = window.URL.createObjectURL(blob);
+    // Trigger download through centralized API client (handles VITE_API_BASE_URL & auth token automatically)
+    api
+      .get(`/reports/${reportType}`, {
+        params,
+        responseType: 'blob',
+      })
+      .then((res) => {
+        const downloadUrl = window.URL.createObjectURL(new Blob([res.data]));
         const a = document.createElement('a');
         a.href = downloadUrl;
         a.download = `${reportType}-report-${range}.csv`;

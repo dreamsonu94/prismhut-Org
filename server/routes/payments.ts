@@ -2,8 +2,9 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
 import { requireAuth, AuthenticatedRequest } from '../middleware/auth.js';
+import { requireRole } from '../middleware/rbac.js';
 import { BillingService } from '../services/billingService.js';
-import { PaymentMethod } from '@prisma/client';
+import { PaymentMethod, RoleType } from '@prisma/client';
 import { logger } from '../utils/logger.js';
 
 const router = Router();
@@ -18,7 +19,7 @@ const processPaymentSchema = z.object({
 });
 
 // GET /api/v1/payments
-router.get('/', requireAuth, async (req: AuthenticatedRequest, res) => {
+router.get('/', requireAuth, requireRole([RoleType.ADMIN, RoleType.MANAGER, RoleType.CASHIER]), async (req: AuthenticatedRequest, res) => {
   try {
     const { orderId, method, date } = req.query;
 
@@ -61,7 +62,7 @@ router.get('/', requireAuth, async (req: AuthenticatedRequest, res) => {
 });
 
 // POST /api/v1/payments
-router.post('/', requireAuth, async (req: AuthenticatedRequest, res) => {
+router.post('/', requireAuth, requireRole([RoleType.ADMIN, RoleType.MANAGER, RoleType.CASHIER]), async (req: AuthenticatedRequest, res) => {
   try {
     const parseResult = processPaymentSchema.safeParse(req.body);
     if (!parseResult.success) {

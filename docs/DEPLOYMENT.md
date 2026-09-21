@@ -65,15 +65,17 @@ DIRECT_URL=postgresql://postgres:[password]@db.[project-ref].supabase.co:5432/po
 JWT_SECRET=your_secure_random_64_character_secret_here
 
 # Network & CORS (Backend)
-CORS_ORIGINS=https://your-pos-frontend.vercel.app
-CLIENT_URL=https://your-pos-frontend.vercel.app
+CORS_ORIGIN=https://YOUR-VERCEL-FRONTEND-URL
+CORS_ORIGINS=https://YOUR-VERCEL-FRONTEND-URL
+CLIENT_URL=https://YOUR-VERCEL-FRONTEND-URL
 PORT=3000
 HOST=0.0.0.0
 NODE_ENV=production
 
-# Frontend Client (Vite)
-VITE_API_BASE_URL=https://your-pos-backend.onrender.com/api/v1
-VITE_WS_URL=https://your-pos-backend.onrender.com
+# Frontend Client (Vite) - Configure in Vercel at deployment time
+# (Leave empty if backend serves the frontend as single container)
+VITE_API_BASE_URL=
+VITE_WS_URL=
 ```
 
 ---
@@ -109,9 +111,9 @@ VITE_WS_URL=https://your-pos-backend.onrender.com
 2. Select **Vite** framework preset:
    - **Build Command**: `npm run build:client`
    - **Output Directory**: `dist`
-3. Add environment variables:
-   - `VITE_API_BASE_URL`: `https://your-backend-url.onrender.com/api/v1`
-   - `VITE_WS_URL`: `https://your-backend-url.onrender.com`
+3. Add environment variables (configured at deployment time once Render service is created):
+   - `VITE_API_BASE_URL`: `https://YOUR-RENDER-BACKEND-URL/api/v1` (or leave empty if using same-origin proxy)
+   - `VITE_WS_URL`: `https://YOUR-RENDER-BACKEND-URL` (or leave empty to inherit from API base URL)
 4. Deploy.
 
 ---

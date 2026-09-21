@@ -12,6 +12,7 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import { RoleType } from '../types/index.js';
+import { PWAInstallButton } from './PWAInstallButton.js';
 
 export const Header: React.FC = () => {
   const { user, logout, login } = useAuth();
@@ -108,6 +109,9 @@ export const Header: React.FC = () => {
 
       {/* Right User & Quick Switcher */}
       <div className="flex items-center gap-3">
+        {/* PWA Install Button for Mobile Waiter / POS */}
+        <PWAInstallButton />
+
         {/* Quick Role Switcher for seamless testing */}
         <div className="relative">
           <button

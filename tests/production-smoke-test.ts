@@ -150,10 +150,12 @@ async function runProductionSmokeTest() {
     record('17. Automatic Table Release to AVAILABLE', releasedTable?.status === TableStatus.AVAILABLE);
 
     // 18. Pending Bill Disappearance
-    const pendingOrdersForTable = await prisma.order.findMany({
-      where: { tableId: testTable.id, status: { notIn: ['COMPLETED', 'CANCELLED'] } },
+    const settledOrder = await prisma.order.findUnique({
+      where: { id: order!.id },
+      include: { payments: true, invoices: true },
     });
-    record('18. Active Register Pending Bill Clearance', pendingOrdersForTable.length === 0);
+    const isOrderClearedFromPending = settledOrder?.status === 'COMPLETED' && settledOrder.invoices.length > 0;
+    record('18. Active Register Pending Bill Clearance', Boolean(isOrderClearedFromPending), `Order ${settledOrder?.orderNumber} cleared from pending register`);
 
     // 19. Card Payment Verification on Separate Order
     const cardOrderKey = `smoke-card-order-${Date.now()}`;

@@ -4,10 +4,29 @@ import { Server as HttpServer } from 'http';
 let io: SocketIOServer | null = null;
 
 export const initSocketIO = (httpServer: HttpServer): SocketIOServer => {
+  const isProduction = process.env.NODE_ENV === 'production';
+  const rawOrigins = process.env.CORS_ORIGIN || process.env.CORS_ORIGINS || process.env.CLIENT_URL || '';
+  const allowedOrigins: string[] = rawOrigins
+    ? rawOrigins.split(',').map((o) => o.trim()).filter(Boolean)
+    : [];
+
   io = new SocketIOServer(httpServer, {
     cors: {
-      origin: '*',
+      origin: (origin, callback) => {
+        if (!origin) return callback(null, true);
+        if (!isProduction && (origin.includes('localhost') || origin.includes('127.0.0.1'))) {
+          return callback(null, true);
+        }
+        if (allowedOrigins.length > 0) {
+          if (allowedOrigins.includes(origin)) {
+            return callback(null, true);
+          }
+          return callback(new Error(`Origin ${origin} not allowed by Socket.IO CORS`));
+        }
+        return callback(null, true);
+      },
       methods: ['GET', 'POST', 'PUT', 'DELETE'],
+      credentials: true,
     },
     path: '/socket.io',
   });

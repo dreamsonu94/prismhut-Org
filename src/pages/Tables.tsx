@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client.js';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext.js';
 import { TableItem, TableStatus } from '../types/index.js';
 import {
   Users,
@@ -18,6 +19,7 @@ import {
 
 export const Tables: React.FC = () => {
   const navigate = useNavigate();
+  const { hasRole } = useAuth();
   const queryClient = useQueryClient();
   const [selectedSection, setSelectedSection] = useState<string>('ALL');
   const [activeTableDetail, setActiveTableDetail] = useState<TableItem | null>(null);
@@ -278,7 +280,7 @@ export const Tables: React.FC = () => {
                 </div>
 
                 {/* Actions */}
-                <div className="pt-3 grid grid-cols-2 gap-2">
+                <div className={`pt-3 ${hasRole(['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER']) ? 'grid grid-cols-2 gap-2' : 'flex flex-col gap-2'}`}>
                   <button
                     onClick={() => {
                       navigate(`/pos?tableId=${activeTableDetail.id}`);
@@ -288,15 +290,21 @@ export const Tables: React.FC = () => {
                     <PlusCircle className="w-3.5 h-3.5" />
                     <span>Add More Items</span>
                   </button>
-                  <button
-                    onClick={() => {
-                      navigate(`/billing?orderId=${activeTableDetail.activeOrder?.id}`);
-                    }}
-                    className="flex items-center justify-center gap-1.5 py-2 px-3 bg-orange-600 hover:bg-orange-700 rounded-xl text-xs font-bold text-white shadow-xs transition-colors"
-                  >
-                    <CreditCard className="w-3.5 h-3.5" />
-                    <span>Settle Bill</span>
-                  </button>
+                  {hasRole(['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER']) ? (
+                    <button
+                      onClick={() => {
+                        navigate(`/billing?orderId=${activeTableDetail.activeOrder?.id}`);
+                      }}
+                      className="flex items-center justify-center gap-1.5 py-2 px-3 bg-orange-600 hover:bg-orange-700 rounded-xl text-xs font-bold text-white shadow-xs transition-colors"
+                    >
+                      <CreditCard className="w-3.5 h-3.5" />
+                      <span>Settle Bill</span>
+                    </button>
+                  ) : (
+                    <div className="text-center py-1.5 px-3 bg-slate-50 border border-slate-200 rounded-xl text-[11px] text-slate-500 font-medium">
+                      Table order active — bill settlement managed at Cashier
+                    </div>
+                  )}
                 </div>
               </div>
             ) : (
