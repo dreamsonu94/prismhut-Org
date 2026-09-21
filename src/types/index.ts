@@ -124,6 +124,7 @@ export interface Order {
   kots: Ticket[];
   bots: Ticket[];
   payments?: Payment[];
+  invoices?: Invoice[];
 }
 
 export interface TicketItem {

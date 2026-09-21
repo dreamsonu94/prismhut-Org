@@ -20,11 +20,105 @@ export interface CreateOrderInput {
   waiterId?: string;
 }
 
+async function getNextOrderNumber(tx: any, restaurantId: string): Promise<string> {
+  const lastOrder = await tx.order.findFirst({
+    where: { restaurantId },
+    orderBy: { createdAt: 'desc' },
+    select: { orderNumber: true },
+  });
+  let nextSeq = 1001;
+  if (lastOrder?.orderNumber) {
+    const match = lastOrder.orderNumber.match(/(\d+)$/);
+    if (match) {
+      nextSeq = parseInt(match[1], 10) + 1;
+    }
+  }
+  let orderNumber = `ORD-${String(nextSeq).padStart(4, '0')}`;
+  let exists = await tx.order.findUnique({ where: { orderNumber } });
+  while (exists) {
+    nextSeq++;
+    orderNumber = `ORD-${String(nextSeq).padStart(4, '0')}`;
+    exists = await tx.order.findUnique({ where: { orderNumber } });
+  }
+  return orderNumber;
+}
+
+async function getNextKotNumber(tx: any, prefix: string): Promise<string> {
+  const lastKot = await tx.kOT.findFirst({
+    orderBy: { createdAt: 'desc' },
+    select: { kotNumber: true },
+  });
+  let nextSeq = 1001;
+  if (lastKot?.kotNumber) {
+    const match = lastKot.kotNumber.match(/(\d+)$/);
+    if (match) {
+      nextSeq = parseInt(match[1], 10) + 1;
+    }
+  }
+  let kotNumber = `${prefix}${String(nextSeq).padStart(4, '0')}`;
+  let exists = await tx.kOT.findUnique({ where: { kotNumber } });
+  while (exists) {
+    nextSeq++;
+    kotNumber = `${prefix}${String(nextSeq).padStart(4, '0')}`;
+    exists = await tx.kOT.findUnique({ where: { kotNumber } });
+  }
+  return kotNumber;
+}
+
+async function getNextBotNumber(tx: any, prefix: string): Promise<string> {
+  const lastBot = await tx.bOT.findFirst({
+    orderBy: { createdAt: 'desc' },
+    select: { botNumber: true },
+  });
+  let nextSeq = 1001;
+  if (lastBot?.botNumber) {
+    const match = lastBot.botNumber.match(/(\d+)$/);
+    if (match) {
+      nextSeq = parseInt(match[1], 10) + 1;
+    }
+  }
+  let botNumber = `${prefix}${String(nextSeq).padStart(4, '0')}`;
+  let exists = await tx.bOT.findUnique({ where: { botNumber } });
+  while (exists) {
+    nextSeq++;
+    botNumber = `${prefix}${String(nextSeq).padStart(4, '0')}`;
+    exists = await tx.bOT.findUnique({ where: { botNumber } });
+  }
+  return botNumber;
+}
+
+class AsyncMutex {
+  private queue = Promise.resolve();
+
+  async runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const prev = this.queue;
+    let resolveNext: () => void;
+    this.queue = new Promise<void>((resolve) => {
+      resolveNext = resolve;
+    });
+
+    await prev.catch(() => {});
+    try {
+      return await fn();
+    } finally {
+      resolveNext!();
+    }
+  }
+}
+
+const orderCreationMutex = new AsyncMutex();
+
 export class OrderService {
   /**
    * Create an order with transaction, generating KOT for KITCHEN items and BOT for BAR items.
    */
   static async createOrder(restaurantId: string, input: CreateOrderInput) {
+    return orderCreationMutex.runExclusive(async () => {
+      return OrderService._executeCreateOrder(restaurantId, input);
+    });
+  }
+
+  private static async _executeCreateOrder(restaurantId: string, input: CreateOrderInput) {
     // 1. Idempotency Check
     if (input.idempotencyKey) {
       const existing = await prisma.order.findUnique({
@@ -123,146 +217,161 @@ export class OrderService {
       if (waiter) waiterName = waiter.name;
     }
 
-    // 6. Execute PostgreSQL Transaction
-    const result = await prisma.$transaction(async (tx) => {
-      // Generate Order Number
-      const orderCount = await tx.order.count({ where: { restaurantId } });
-      const orderNumber = `ORD-${String(orderCount + 1001).padStart(4, '0')}`;
+    // 6. Execute PostgreSQL Transaction with retry on concurrency contention
+    let result: any = null;
+    let attempt = 0;
+    const maxAttempts = 3;
 
-      // Create Order
-      const newOrder = await tx.order.create({
-        data: {
-          restaurantId,
-          orderNumber,
-          tableId: input.tableId || null,
-          waiterId: input.waiterId || null,
-          customerId: input.customerId || null,
-          guestCount: input.guestCount || 1,
-          orderType: input.orderType || OrderType.DINE_IN,
-          status: OrderStatus.CONFIRMED,
-          subtotal,
-          discount: discountAmount,
-          tax: totalTax,
-          serviceCharge,
-          grandTotal,
-          idempotencyKey: input.idempotencyKey || null,
-          notes: input.notes || null,
-        },
-      });
+    while (attempt < maxAttempts) {
+      attempt++;
+      try {
+        result = await prisma.$transaction(async (tx) => {
+          // Generate Order Number with collision safety
+          const orderNumber = await getNextOrderNumber(tx, restaurantId);
 
-      // Create Order Items
-      const createdOrderItems: any[] = [];
-      for (const item of preparedItems) {
-        const orderItem = await tx.orderItem.create({
-          data: {
-            orderId: newOrder.id,
-            menuItemId: item.menuItemId,
-            quantity: item.quantity,
-            unitPrice: item.unitPrice,
-            tax: item.tax,
-            discount: item.discount,
-            notes: item.notes,
-            department: item.department,
-            status: TicketStatus.PENDING,
-          },
-        });
-        createdOrderItems.push({ ...orderItem, name: item.name });
-      }
-
-      // Filter Kitchen items vs Bar items
-      const kitchenItems = createdOrderItems.filter((i) => i.department === Department.KITCHEN);
-      const barItems = createdOrderItems.filter((i) => i.department === Department.BAR);
-
-      let createdKot: any = null;
-      let createdBot: any = null;
-
-      // Generate KOT for Kitchen Items
-      if (kitchenItems.length > 0) {
-        const kotCount = await tx.kOT.count();
-        const kotNumber = `${restaurant.kotPrefix}${String(kotCount + 1001).padStart(4, '0')}`;
-        createdKot = await tx.kOT.create({
-          data: {
-            kotNumber,
-            orderId: newOrder.id,
-            tableNumber,
-            waiterName,
-            priority: TicketPriority.NORMAL,
-            status: TicketStatus.PENDING,
-          },
-        });
-
-        for (const kItem of kitchenItems) {
-          await tx.kOTItem.create({
+          // Create Order
+          const newOrder = await tx.order.create({
             data: {
-              kotId: createdKot.id,
-              orderItemId: kItem.id,
-              name: kItem.name,
-              quantity: kItem.quantity,
-              notes: kItem.notes,
+              restaurantId,
+              orderNumber,
+              tableId: input.tableId || null,
+              waiterId: input.waiterId || null,
+              customerId: input.customerId || null,
+              guestCount: input.guestCount || 1,
+              orderType: input.orderType || OrderType.DINE_IN,
+              status: OrderStatus.CONFIRMED,
+              subtotal,
+              discount: discountAmount,
+              tax: totalTax,
+              serviceCharge,
+              grandTotal,
+              idempotencyKey: input.idempotencyKey || null,
+              notes: input.notes || null,
             },
           });
-        }
-      }
 
-      // Generate BOT for Bar Items
-      if (barItems.length > 0) {
-        const botCount = await tx.bOT.count();
-        const botNumber = `${restaurant.botPrefix}${String(botCount + 1001).padStart(4, '0')}`;
-        createdBot = await tx.bOT.create({
-          data: {
-            botNumber,
-            orderId: newOrder.id,
-            tableNumber,
-            waiterName,
-            priority: TicketPriority.NORMAL,
-            status: TicketStatus.PENDING,
-          },
-        });
+          // Create Order Items
+          const createdOrderItems: any[] = [];
+          for (const item of preparedItems) {
+            const orderItem = await tx.orderItem.create({
+              data: {
+                orderId: newOrder.id,
+                menuItemId: item.menuItemId,
+                quantity: item.quantity,
+                unitPrice: item.unitPrice,
+                tax: item.tax,
+                discount: item.discount,
+                notes: item.notes,
+                department: item.department,
+                status: TicketStatus.PENDING,
+              },
+            });
+            createdOrderItems.push({ ...orderItem, name: item.name });
+          }
 
-        for (const bItem of barItems) {
-          await tx.bOTItem.create({
+          // Filter Kitchen items vs Bar items
+          const kitchenItems = createdOrderItems.filter((i) => i.department === Department.KITCHEN);
+          const barItems = createdOrderItems.filter((i) => i.department === Department.BAR);
+
+          let createdKot: any = null;
+          let createdBot: any = null;
+
+          // Generate KOT for Kitchen Items
+          if (kitchenItems.length > 0) {
+            const kotNumber = await getNextKotNumber(tx, restaurant.kotPrefix);
+            createdKot = await tx.kOT.create({
+              data: {
+                kotNumber,
+                orderId: newOrder.id,
+                tableNumber,
+                waiterName,
+                priority: TicketPriority.NORMAL,
+                status: TicketStatus.PENDING,
+              },
+            });
+
+            for (const kItem of kitchenItems) {
+              await tx.kOTItem.create({
+                data: {
+                  kotId: createdKot.id,
+                  orderItemId: kItem.id,
+                  name: kItem.name,
+                  quantity: kItem.quantity,
+                  notes: kItem.notes,
+                },
+              });
+            }
+          }
+
+          // Generate BOT for Bar Items
+          if (barItems.length > 0) {
+            const botNumber = await getNextBotNumber(tx, restaurant.botPrefix);
+            createdBot = await tx.bOT.create({
+              data: {
+                botNumber,
+                orderId: newOrder.id,
+                tableNumber,
+                waiterName,
+                priority: TicketPriority.NORMAL,
+                status: TicketStatus.PENDING,
+              },
+            });
+
+            for (const bItem of barItems) {
+              await tx.bOTItem.create({
+                data: {
+                  botId: createdBot.id,
+                  orderItemId: bItem.id,
+                  name: bItem.name,
+                  quantity: bItem.quantity,
+                  notes: bItem.notes,
+                },
+              });
+            }
+          }
+
+          // Update Table Status to OCCUPIED if dine-in
+          if (input.tableId && input.orderType !== OrderType.TAKEAWAY) {
+            await tx.table.update({
+              where: { id: input.tableId },
+              data: { status: TableStatus.OCCUPIED },
+            });
+          }
+
+          // Audit Log
+          await tx.auditLog.create({
             data: {
-              botId: createdBot.id,
-              orderItemId: bItem.id,
-              name: bItem.name,
-              quantity: bItem.quantity,
-              notes: bItem.notes,
+              restaurantId,
+              userId: input.waiterId || null,
+              action: 'ORDER_CREATED',
+              entity: 'ORDER',
+              entityId: newOrder.id,
+              details: JSON.stringify({
+                orderNumber,
+                grandTotal,
+                kotGenerated: !!createdKot,
+                botGenerated: !!createdBot,
+              }),
             },
           });
+
+          return {
+            orderId: newOrder.id,
+            kotId: createdKot?.id,
+            botId: createdBot?.id,
+          };
+        }, { maxWait: 10000, timeout: 20000 });
+
+        break;
+      } catch (err: any) {
+        if ((err?.code === 'P2002' || err?.code === 'P2028') && attempt < maxAttempts) {
+          console.warn(`[OrderService] Race contention or pool acquisition retry (attempt ${attempt}/${maxAttempts}). Retrying...`);
+          await new Promise((res) => setTimeout(res, 100 * attempt));
+          continue;
         }
+        throw err;
       }
-
-      // Update Table Status to OCCUPIED if dine-in
-      if (input.tableId && input.orderType !== OrderType.TAKEAWAY) {
-        await tx.table.update({
-          where: { id: input.tableId },
-          data: { status: TableStatus.OCCUPIED },
-        });
-      }
-
-      // Audit Log
-      await tx.auditLog.create({
-        data: {
-          restaurantId,
-          userId: input.waiterId || null,
-          action: 'ORDER_CREATED',
-          entity: 'ORDER',
-          entityId: newOrder.id,
-          details: JSON.stringify({
-            orderNumber,
-            grandTotal,
-            kotGenerated: !!createdKot,
-            botGenerated: !!createdBot,
-          }),
-        },
-      });
-
-      return {
-        orderId: newOrder.id,
-        kotId: createdKot?.id,
-        botId: createdBot?.id,
-      };
-    });
+    }
 
     // 7. Fetch full order for response and socket emission
     const fullOrder = await prisma.order.findUnique({
@@ -398,8 +507,7 @@ export class OrderService {
       let createdBot: any = null;
 
       if (kitchenItems.length > 0) {
-        const kotCount = await tx.kOT.count();
-        const kotNumber = `${restaurant.kotPrefix}${String(kotCount + 1001).padStart(4, '0')}`;
+        const kotNumber = await getNextKotNumber(tx, restaurant.kotPrefix);
         createdKot = await tx.kOT.create({
           data: {
             kotNumber,
@@ -424,8 +532,7 @@ export class OrderService {
       }
 
       if (barItems.length > 0) {
-        const botCount = await tx.bOT.count();
-        const botNumber = `${restaurant.botPrefix}${String(botCount + 1001).padStart(4, '0')}`;
+        const botNumber = await getNextBotNumber(tx, restaurant.botPrefix);
         createdBot = await tx.bOT.create({
           data: {
             botNumber,

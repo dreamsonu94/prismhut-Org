@@ -8,36 +8,50 @@ const router = Router();
 router.get('/', requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
     const restaurantId = req.user!.restaurantId;
-    const { date, search } = req.query;
+    const { date, search, startDate, endDate } = req.query;
 
     const where: any = { restaurantId };
-    if (date) {
+    if (startDate && endDate) {
+      const start = new Date(String(startDate));
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(String(endDate));
+      end.setHours(23, 59, 59, 999);
+      where.createdAt = { gte: start, lte: end };
+    } else if (date) {
       const start = new Date(String(date));
       start.setHours(0, 0, 0, 0);
       const end = new Date(String(date));
       end.setHours(23, 59, 59, 999);
       where.createdAt = { gte: start, lte: end };
     }
+
     if (search) {
+      const s = String(search).trim();
       where.OR = [
-        { invoiceNumber: { contains: String(search), mode: 'insensitive' } },
-        { customerName: { contains: String(search), mode: 'insensitive' } },
-        { tableName: { contains: String(search), mode: 'insensitive' } },
+        { invoiceNumber: { contains: s, mode: 'insensitive' } },
+        { customerName: { contains: s, mode: 'insensitive' } },
+        { tableName: { contains: s, mode: 'insensitive' } },
+        { waiterName: { contains: s, mode: 'insensitive' } },
+        { order: { orderNumber: { contains: s, mode: 'insensitive' } } },
       ];
     }
 
     const invoices = await prisma.invoice.findMany({
       where,
       include: {
+        restaurant: true,
         order: {
           include: {
             items: { include: { menuItem: true } },
             payments: true,
+            table: true,
+            waiter: { select: { id: true, name: true, username: true } },
+            customer: true,
           },
         },
       },
       orderBy: { createdAt: 'desc' },
-      take: 100,
+      take: 200,
     });
 
     return res.json({

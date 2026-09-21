@@ -4,6 +4,7 @@ import { prisma } from '../db/prisma.js';
 import { requireAuth, AuthenticatedRequest } from '../middleware/auth.js';
 import { BillingService } from '../services/billingService.js';
 import { PaymentMethod } from '@prisma/client';
+import { logger } from '../utils/logger.js';
 
 const router = Router();
 
@@ -91,7 +92,10 @@ router.post('/', requireAuth, async (req: AuthenticatedRequest, res) => {
       ...(result.isDuplicate && { message: 'Order was already settled' }),
     });
   } catch (error: any) {
-    console.error('Payment processing error:', error);
+    logger.paymentFailure(req.body?.orderId, req.body?.amount, error, {
+      method: req.body?.method,
+      idempotencyKey: (req.headers['x-idempotency-key'] as string) || req.body?.idempotencyKey,
+    });
     if (error.code === 'ORDER_NOT_FOUND') {
       return res.status(404).json({
         success: false,

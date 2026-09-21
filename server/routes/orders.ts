@@ -29,7 +29,7 @@ const createOrderSchema = z.object({
 router.get('/', requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
     const restaurantId = req.user!.restaurantId;
-    const { status, tableId, date, unpaid } = req.query;
+    const { status, tableId, date, unpaid, startDate, endDate, search } = req.query;
 
     const where: any = { restaurantId };
     if (unpaid === 'true') {
@@ -39,12 +39,31 @@ router.get('/', requireAuth, async (req: AuthenticatedRequest, res) => {
       where.status = status as OrderStatus;
     }
     if (tableId) where.tableId = String(tableId);
-    if (date) {
+
+    if (startDate && endDate) {
+      const start = new Date(String(startDate));
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(String(endDate));
+      end.setHours(23, 59, 59, 999);
+      where.createdAt = { gte: start, lte: end };
+    } else if (date) {
       const start = new Date(String(date));
       start.setHours(0, 0, 0, 0);
       const end = new Date(String(date));
       end.setHours(23, 59, 59, 999);
       where.createdAt = { gte: start, lte: end };
+    }
+
+    if (search) {
+      const s = String(search).trim();
+      where.OR = [
+        { orderNumber: { contains: s, mode: 'insensitive' } },
+        { table: { tableName: { contains: s, mode: 'insensitive' } } },
+        { table: { tableNumber: { contains: s, mode: 'insensitive' } } },
+        { waiter: { name: { contains: s, mode: 'insensitive' } } },
+        { customer: { name: { contains: s, mode: 'insensitive' } } },
+        { invoices: { some: { invoiceNumber: { contains: s, mode: 'insensitive' } } } },
+      ];
     }
 
     const orders = await prisma.order.findMany({
@@ -60,7 +79,7 @@ router.get('/', requireAuth, async (req: AuthenticatedRequest, res) => {
         invoices: true,
       },
       orderBy: { createdAt: 'desc' },
-      take: 100,
+      take: 200,
     });
 
     return res.json({
@@ -256,6 +275,20 @@ router.post('/:id/cancel', requireAuth, async (req: AuthenticatedRequest, res) =
       return res.status(404).json({
         success: false,
         error: { code: 'NOT_FOUND', message: 'Order not found' },
+      });
+    }
+
+    if (order.status === OrderStatus.COMPLETED) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'ORDER_ALREADY_COMPLETED', message: 'Completed and settled orders cannot be cancelled.' },
+      });
+    }
+
+    if (order.status === OrderStatus.CANCELLED) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'ORDER_ALREADY_CANCELLED', message: 'Order is already cancelled.' },
       });
     }
 

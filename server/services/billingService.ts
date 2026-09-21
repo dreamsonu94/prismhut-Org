@@ -11,11 +11,38 @@ export interface ProcessPaymentInput {
   idempotencyKey?: string;
 }
 
+class AsyncMutex {
+  private queue = Promise.resolve();
+
+  async runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const prev = this.queue;
+    let resolveNext: () => void;
+    this.queue = new Promise<void>((resolve) => {
+      resolveNext = resolve;
+    });
+
+    await prev.catch(() => {});
+    try {
+      return await fn();
+    } finally {
+      resolveNext!();
+    }
+  }
+}
+
+const paymentMutex = new AsyncMutex();
+
 export class BillingService {
   /**
    * Process payment, create invoice, and complete order atomically and idempotently
    */
   static async processPayment(restaurantId: string, input: ProcessPaymentInput) {
+    return paymentMutex.runExclusive(async () => {
+      return BillingService._executeProcessPayment(restaurantId, input);
+    });
+  }
+
+  private static async _executeProcessPayment(restaurantId: string, input: ProcessPaymentInput) {
     // 1. Initial order lookup
     const order = await prisma.order.findUnique({
       where: { id: input.orderId },
@@ -41,7 +68,62 @@ export class BillingService {
       throw err;
     }
 
-    // 2. Idempotency Check: if order is already settled or paid, return existing invoice safely
+    // 2. Idempotency Check: check if referenceNumber / idempotencyKey already settled
+    if (input.idempotencyKey) {
+      const existingPaymentByIdemp = await prisma.payment.findFirst({
+        where: { referenceNumber: input.idempotencyKey },
+        include: {
+          order: {
+            include: {
+              table: true,
+              waiter: true,
+              customer: true,
+              items: { include: { menuItem: true } },
+              payments: true,
+              invoices: true,
+            },
+          },
+        },
+      });
+
+      if (existingPaymentByIdemp && existingPaymentByIdemp.order) {
+        const existingInvoice = await prisma.invoice.findFirst({
+          where: { orderId: existingPaymentByIdemp.orderId },
+          include: {
+            restaurant: true,
+            order: {
+              include: {
+                items: { include: { menuItem: true } },
+                payments: true,
+                table: true,
+                waiter: true,
+                customer: true,
+              },
+            },
+          },
+        });
+
+        if (existingPaymentByIdemp.order.tableId) {
+          try {
+            await prisma.table.update({
+              where: { id: existingPaymentByIdemp.order.tableId },
+              data: { status: TableStatus.AVAILABLE },
+            });
+            const updatedTable = await prisma.table.findUnique({ where: { id: existingPaymentByIdemp.order.tableId } });
+            if (updatedTable) emitEvent('table.updated', updatedTable);
+          } catch (_) {}
+        }
+
+        return {
+          payment: existingPaymentByIdemp,
+          invoice: existingInvoice,
+          updatedOrder: existingInvoice?.order || existingPaymentByIdemp.order,
+          isDuplicate: true,
+        };
+      }
+    }
+
+    // Also check if order is already settled or paid, return existing invoice safely
     const existingPaid =
       order.status === OrderStatus.COMPLETED ||
       order.invoices.length > 0 ||
@@ -108,43 +190,108 @@ export class BillingService {
     }
     let invoiceNumber = `${invoicePrefix}${String(nextSeq).padStart(4, '0')}`;
 
-    // Check collision just in case
-    const existingInvoice = await prisma.invoice.findUnique({ where: { invoiceNumber } });
-    if (existingInvoice) {
-      invoiceNumber = `${invoicePrefix}${Date.now().toString().slice(-6)}`;
+    // Check collision and guarantee uniqueness with retry
+    let collisionCheck = await prisma.invoice.findUnique({ where: { invoiceNumber } });
+    let attempts = 0;
+    while (collisionCheck && attempts < 5) {
+      attempts++;
+      invoiceNumber = `${invoicePrefix}${Date.now().toString().slice(-6)}-${Math.floor(Math.random() * 900 + 100)}`;
+      collisionCheck = await prisma.invoice.findUnique({ where: { invoiceNumber } });
     }
 
     console.log(`[BillingService] Database transaction starting for order: ${order.orderNumber} | Target Invoice: ${invoiceNumber}`);
     const txStart = Date.now();
 
     // 3. Execute Atomic Batch Transaction (Compatible with PgBouncer / Supabase Transaction Pooler)
-    const [payment, invoice, updatedOrder] = await prisma.$transaction([
-      prisma.payment.create({
-        data: {
-          orderId: order.id,
-          amount: input.amount,
-          method: input.method,
-          referenceNumber: input.referenceNumber || input.idempotencyKey || null,
-          status: PaymentStatus.PAID,
-          paidAt: new Date(),
-        },
-      }),
-      prisma.invoice.create({
-        data: {
-          restaurantId,
-          orderId: order.id,
-          invoiceNumber,
-          subtotal: order.subtotal,
-          discount: order.discount,
-          tax: order.tax,
-          serviceCharge: order.serviceCharge,
-          grandTotal: order.grandTotal,
-          paymentMethod: input.method,
-          paidStatus: PaymentStatus.PAID,
-          customerName: input.customerName || order.customer?.name || 'Valued Guest',
-          tableName: order.table ? (order.table.tableName || order.table.tableNumber) : 'Takeaway',
-          waiterName: order.waiter ? order.waiter.name : 'Staff',
-        },
+    let payment: any;
+    let invoice: any;
+    let updatedOrder: any;
+
+    try {
+      const txResult = await prisma.$transaction([
+        prisma.payment.create({
+          data: {
+            orderId: order.id,
+            amount: input.amount,
+            method: input.method,
+            referenceNumber: input.referenceNumber || input.idempotencyKey || null,
+            status: PaymentStatus.PAID,
+            paidAt: new Date(),
+          },
+        }),
+        prisma.invoice.create({
+          data: {
+            restaurantId,
+            orderId: order.id,
+            invoiceNumber,
+            subtotal: order.subtotal,
+            discount: order.discount,
+            tax: order.tax,
+            serviceCharge: order.serviceCharge,
+            grandTotal: order.grandTotal,
+            paymentMethod: input.method,
+            paidStatus: PaymentStatus.PAID,
+            customerName: input.customerName || order.customer?.name || 'Valued Guest',
+            tableName: order.table ? (order.table.tableName || order.table.tableNumber) : 'Takeaway',
+            waiterName: order.waiter ? order.waiter.name : 'Staff',
+          },
+          include: {
+            restaurant: true,
+            order: {
+              include: {
+                items: { include: { menuItem: true } },
+                payments: true,
+                table: true,
+                waiter: true,
+                customer: true,
+              },
+            },
+          },
+        }),
+        prisma.order.update({
+          where: { id: order.id },
+          data: { status: OrderStatus.COMPLETED },
+          include: {
+            table: true,
+            waiter: true,
+            customer: true,
+            items: { include: { menuItem: true } },
+            payments: true,
+            invoices: true,
+          },
+        }),
+        ...(order.tableId
+          ? [
+              prisma.table.update({
+                where: { id: order.tableId },
+                data: { status: TableStatus.AVAILABLE },
+              }),
+            ]
+          : []),
+        prisma.auditLog.create({
+          data: {
+            restaurantId,
+            action: 'PAYMENT_COMPLETED',
+            entity: 'ORDER',
+            entityId: order.id,
+            details: JSON.stringify({
+              invoiceNumber,
+              amount: input.amount,
+              method: input.method,
+              referenceNumber: input.referenceNumber || null,
+            }),
+          },
+        }),
+      ]);
+
+      payment = txResult[0];
+      invoice = txResult[1];
+      updatedOrder = txResult[2];
+    } catch (txErr: any) {
+      console.warn(`[BillingService] Transaction race or collision detected: ${txErr?.message || txErr}`);
+      // Check if another concurrent request successfully created invoice/payment for this order
+      const existingInvoice = await prisma.invoice.findFirst({
+        where: { orderId: order.id },
         include: {
           restaurant: true,
           order: {
@@ -157,42 +304,21 @@ export class BillingService {
             },
           },
         },
-      }),
-      prisma.order.update({
-        where: { id: order.id },
-        data: { status: OrderStatus.COMPLETED },
-        include: {
-          table: true,
-          waiter: true,
-          customer: true,
-          items: { include: { menuItem: true } },
-          payments: true,
-          invoices: true,
-        },
-      }),
-      ...(order.tableId
-        ? [
-            prisma.table.update({
-              where: { id: order.tableId },
-              data: { status: TableStatus.AVAILABLE },
-            }),
-          ]
-        : []),
-      prisma.auditLog.create({
-        data: {
-          restaurantId,
-          action: 'PAYMENT_COMPLETED',
-          entity: 'ORDER',
-          entityId: order.id,
-          details: JSON.stringify({
-            invoiceNumber,
-            amount: input.amount,
-            method: input.method,
-            referenceNumber: input.referenceNumber || null,
-          }),
-        },
-      }),
-    ]);
+      });
+
+      if (existingInvoice) {
+        const existingPayment = await prisma.payment.findFirst({
+          where: { orderId: order.id, status: PaymentStatus.PAID },
+        });
+        return {
+          payment: existingPayment,
+          invoice: existingInvoice,
+          updatedOrder: existingInvoice.order,
+          isDuplicate: true,
+        };
+      }
+      throw txErr;
+    }
 
     const txElapsed = Date.now() - txStart;
     console.log(`[BillingService] Database transaction committed successfully in ${txElapsed}ms`);

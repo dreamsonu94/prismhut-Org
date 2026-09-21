@@ -21,6 +21,7 @@ import dashboardRouter from './server/routes/dashboard.js';
 import reportsRouter from './server/routes/reports.js';
 import settingsRouter from './server/routes/settings.js';
 import healthRouter from './server/routes/health.js';
+import { logger } from './server/utils/logger.js';
 
 import { ensureDatabase } from './server/db/database.js';
 
@@ -123,11 +124,7 @@ async function startServer() {
   // Global Error Handler for API
   app.use('/api', (err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
     // Avoid logging sensitive internal errors or leaking credentials
-    if (!isProduction) {
-      console.error('Unhandled API Error:', err);
-    } else {
-      console.error('Unhandled API Error:', err?.name || 'Error');
-    }
+    logger.apiError(req, err);
 
     const statusCode = err.status || err.statusCode || 500;
     // In production, mask internal server error details to prevent leaking database structure or secrets

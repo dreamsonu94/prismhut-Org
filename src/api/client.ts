@@ -8,18 +8,12 @@ export const getApiBaseUrl = (): string => {
     return trimmed.endsWith('/api/v1') ? trimmed : `${trimmed}/api/v1`;
   }
 
-  // If in browser and running on Vercel deployment (or preview)
+  // If in browser and explicitly running on Vercel deployment
   if (typeof window !== 'undefined') {
     const host = window.location.hostname;
-    // On Vercel, the static React app must communicate with the Render backend
-    if (host.includes('vercel.app') || host.includes('prismhut')) {
+    if (host.includes('vercel.app')) {
       return 'https://prismhut-org.onrender.com/api/v1';
     }
-  }
-
-  // In production builds where no VITE_API_BASE_URL was provided, target the production Render backend
-  if (import.meta.env.PROD) {
-    return 'https://prismhut-org.onrender.com/api/v1';
   }
 
   return '/api/v1';

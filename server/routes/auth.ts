@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { prisma } from '../db/prisma.js';
 import { generateToken, requireAuth, AuthenticatedRequest } from '../middleware/auth.js';
+import { logger } from '../utils/logger.js';
 
 const router = Router();
 
@@ -48,6 +49,11 @@ router.post('/login', async (req, res) => {
     });
 
     if (!user || !user.isActive || !isMatch) {
+      logger.authFailure(
+        username,
+        !user ? 'USER_NOT_FOUND' : !user.isActive ? 'ACCOUNT_INACTIVE' : 'PASSWORD_MISMATCH',
+        req.ip
+      );
       return res.status(401).json({
         success: false,
         error: {

@@ -46,10 +46,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const wsEnv = import.meta.env.VITE_WS_URL;
     let serverUrl = wsEnv || (apiEnv && apiEnv.startsWith('http') ? apiEnv.replace(/\/api(\/v1)?\/?$/, '') : undefined);
 
-    // Auto-detect Vercel or production hosting to connect WebSocket to Render backend
+    // Auto-detect Vercel hosting to connect WebSocket to Render backend
     if (!serverUrl && typeof window !== 'undefined') {
       const host = window.location.hostname;
-      if (host.includes('vercel.app') || host.includes('prismhut') || import.meta.env.PROD) {
+      if (host.includes('vercel.app')) {
         serverUrl = 'https://prismhut-org.onrender.com';
       }
     }
