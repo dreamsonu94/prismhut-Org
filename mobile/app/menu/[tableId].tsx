@@ -18,6 +18,7 @@ import { useAuth } from '../../src/context/AuthContext';
 import { useCart } from '../../src/context/CartContext';
 import { menuService } from '../../src/services/menuService';
 import { MenuCategory, MenuItem } from '../../src/types';
+import { extractArray } from '../../src/utils/normalize';
 import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
 import { Header } from '../../src/components/common/Header';
 import { CategoryTabs } from '../../src/components/menu/CategoryTabs';
@@ -60,10 +61,12 @@ export default function MenuScreen() {
         menuService.getCategories(),
         menuService.getMenuItems(),
       ]);
-      setCategories(categoriesData);
-      setMenuItems(itemsData);
+      setCategories(extractArray<MenuCategory>(categoriesData, 'categories'));
+      setMenuItems(extractArray<MenuItem>(itemsData, 'items'));
     } catch (err: any) {
-      setError(err.message || 'Failed to load restaurant menu');
+      setError(err?.message || 'Failed to load restaurant menu');
+      setCategories([]);
+      setMenuItems([]);
     } finally {
       setIsLoading(false);
     }
@@ -73,8 +76,11 @@ export default function MenuScreen() {
     loadMenuData();
   }, [loadMenuData]);
 
+  const safeMenuItems = useMemo(() => (Array.isArray(menuItems) ? menuItems : []), [menuItems]);
+
   const filteredItems = useMemo(() => {
-    return menuItems.filter((item) => {
+    return safeMenuItems.filter((item) => {
+      if (!item) return false;
       if (selectedCategoryId && item.categoryId !== selectedCategoryId) {
         return false;
       }
@@ -83,13 +89,13 @@ export default function MenuScreen() {
       }
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
-        const matchesName = item.name.toLowerCase().includes(q);
+        const matchesName = item.name?.toLowerCase().includes(q);
         const matchesDesc = item.description?.toLowerCase().includes(q);
         if (!matchesName && !matchesDesc) return false;
       }
       return true;
     });
-  }, [menuItems, selectedCategoryId, departmentFilter, searchQuery]);
+  }, [safeMenuItems, selectedCategoryId, departmentFilter, searchQuery]);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>

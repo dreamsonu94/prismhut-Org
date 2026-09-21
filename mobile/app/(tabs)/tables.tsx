@@ -18,6 +18,7 @@ import { useAuth } from '../../src/context/AuthContext';
 import { useSocket } from '../../src/context/SocketContext';
 import { tableService } from '../../src/services/tableService';
 import { Table, TableStatus } from '../../src/types';
+import { extractArray } from '../../src/utils/normalize';
 import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
 import { Header } from '../../src/components/common/Header';
 import { TableCard } from '../../src/components/tables/TableCard';
@@ -44,9 +45,10 @@ export default function TablesScreen() {
     try {
       setError(null);
       const data = await tableService.getTables();
-      setTables(Array.isArray(data) ? data : []);
+      setTables(extractArray<Table>(data, 'tables'));
     } catch (err: any) {
-      setError(err.message || 'Failed to load restaurant floor tables');
+      setError(err?.message || 'Failed to load restaurant floor tables');
+      setTables([]);
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);

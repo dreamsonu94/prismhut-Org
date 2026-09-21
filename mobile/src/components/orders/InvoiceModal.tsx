@@ -82,10 +82,10 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
             {/* Itemized list */}
             <Text style={styles.sectionTitle}>Ordered Items</Text>
             <View style={styles.itemsTable}>
-              {order.items.map((item, idx) => (
+              {(Array.isArray(order.items) ? order.items : []).map((item, idx) => (
                 <View key={idx} style={styles.itemRow}>
                   <Text style={styles.itemQuantity}>{item.quantity}x</Text>
-                  <Text style={styles.itemName}>{item.menuItem?.name}</Text>
+                  <Text style={styles.itemName}>{item.menuItem?.name || 'Menu Item'}</Text>
                   <Text style={styles.itemTotal}>
                     {currency}
                     {Number(item.subtotal || (item.unitPrice * item.quantity)).toFixed(2)}

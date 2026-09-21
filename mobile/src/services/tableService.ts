@@ -3,6 +3,7 @@
  */
 import { apiClient } from '../api/client';
 import { Table, TableStatus } from '../types';
+import { extractArray } from '../utils/normalize';
 
 export const tableService = {
   async getTables(): Promise<Table[]> {
@@ -10,37 +11,34 @@ export const tableService = {
       method: 'GET',
     });
 
+    console.log(
+      '[Dashboard] RAW TABLES RESPONSE:',
+      JSON.stringify(res, null, 2)
+    );
+
     if (!res.success || !res.data) {
-      throw new Error(res.error?.message || 'Failed to fetch restaurant tables');
+      console.warn('[Dashboard] Fetch tables returned unsuccessful response:', res);
+      return [];
     }
 
     // Backend returns { success: true, data: { tables: [...], sections: [...] } } or direct array
-    let rawTables: any[] = [];
-    if (Array.isArray(res.data)) {
-      rawTables = res.data;
-    } else if (res.data && Array.isArray(res.data.tables)) {
-      rawTables = res.data.tables;
-    } else if (res.data && Array.isArray(res.data.data)) {
-      rawTables = res.data.data;
-    } else if (res.data?.data && Array.isArray(res.data.data.tables)) {
-      rawTables = res.data.data.tables;
-    }
+    const rawTables = extractArray<any>(res.data, 'tables');
 
     return rawTables.map((t: any): Table => ({
-      id: t.id,
-      tableNumber: t.tableNumber || t.tableName || '',
-      tableName: t.tableName || (t.tableNumber ? `Table ${t.tableNumber}` : 'Table'),
-      capacity: Number(t.capacity || 4),
-      status: t.status || 'AVAILABLE',
-      sectionId: t.sectionId || t.section?.id || null,
-      section: t.section
+      id: t?.id || String(Math.random()),
+      tableNumber: t?.tableNumber || t?.tableName || '',
+      tableName: t?.tableName || (t?.tableNumber ? `Table ${t.tableNumber}` : 'Table'),
+      capacity: Number(t?.capacity || 4),
+      status: t?.status || 'AVAILABLE',
+      sectionId: t?.sectionId || t?.section?.id || null,
+      section: t?.section
         ? {
             id: t.section.id,
             name: t.section.name,
             description: t.section.description,
           }
         : null,
-      activeOrder: t.activeOrder
+      activeOrder: t?.activeOrder
         ? {
             id: t.activeOrder.id,
             orderNumber: t.activeOrder.orderNumber || '',
@@ -63,34 +61,27 @@ export const tableService = {
     });
 
     if (!res.success || !res.data) {
-      throw new Error(res.error?.message || 'Failed to fetch restaurant tables');
+      return { tables: [], sections: [] };
     }
 
-    let rawTables: any[] = [];
-    let rawSections: any[] = [];
-
-    if (Array.isArray(res.data)) {
-      rawTables = res.data;
-    } else if (res.data && typeof res.data === 'object') {
-      rawTables = Array.isArray(res.data.tables) ? res.data.tables : [];
-      rawSections = Array.isArray(res.data.sections) ? res.data.sections : [];
-    }
+    const rawTables = extractArray<any>(res.data, 'tables');
+    const rawSections = extractArray<any>(res.data, 'sections');
 
     const tables: Table[] = rawTables.map((t: any): Table => ({
-      id: t.id,
-      tableNumber: t.tableNumber || t.tableName || '',
-      tableName: t.tableName || (t.tableNumber ? `Table ${t.tableNumber}` : 'Table'),
-      capacity: Number(t.capacity || 4),
-      status: t.status || 'AVAILABLE',
-      sectionId: t.sectionId || t.section?.id || null,
-      section: t.section
+      id: t?.id || String(Math.random()),
+      tableNumber: t?.tableNumber || t?.tableName || '',
+      tableName: t?.tableName || (t?.tableNumber ? `Table ${t.tableNumber}` : 'Table'),
+      capacity: Number(t?.capacity || 4),
+      status: t?.status || 'AVAILABLE',
+      sectionId: t?.sectionId || t?.section?.id || null,
+      section: t?.section
         ? {
             id: t.section.id,
             name: t.section.name,
             description: t.section.description,
           }
         : null,
-      activeOrder: t.activeOrder
+      activeOrder: t?.activeOrder
         ? {
             id: t.activeOrder.id,
             orderNumber: t.activeOrder.orderNumber || '',

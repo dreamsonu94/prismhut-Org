@@ -3,6 +3,7 @@
  */
 import { apiClient } from '../api/client';
 import { MenuCategory, MenuItem } from '../types';
+import { extractArray } from '../utils/normalize';
 
 export const menuService = {
   async getCategories(): Promise<MenuCategory[]> {
@@ -11,19 +12,10 @@ export const menuService = {
     });
 
     if (!res.success || !res.data) {
-      throw new Error(res.error?.message || 'Failed to fetch menu categories');
+      return [];
     }
 
-    let categories: any[] = [];
-    if (Array.isArray(res.data)) {
-      categories = res.data;
-    } else if (res.data && Array.isArray(res.data.categories)) {
-      categories = res.data.categories;
-    } else if (res.data && Array.isArray(res.data.data)) {
-      categories = res.data.data;
-    }
-
-    return categories;
+    return extractArray<MenuCategory>(res.data, 'categories');
   },
 
   async getMenuItems(params?: {
@@ -38,32 +30,25 @@ export const menuService = {
     });
 
     if (!res.success || !res.data) {
-      throw new Error(res.error?.message || 'Failed to fetch menu items');
+      return [];
     }
 
-    let items: any[] = [];
-    if (Array.isArray(res.data)) {
-      items = res.data;
-    } else if (res.data && Array.isArray(res.data.items)) {
-      items = res.data.items;
-    } else if (res.data && Array.isArray(res.data.data)) {
-      items = res.data.data;
-    }
+    const items = extractArray<any>(res.data, 'items');
 
     return items.map((item: any): MenuItem => ({
-      id: item.id,
-      name: item.name || 'Unnamed Item',
-      description: item.description,
-      price: Number(item.price || 0),
-      costPrice: item.costPrice ? Number(item.costPrice) : undefined,
-      taxRate: Number(item.taxRate ?? item.taxPercent ?? 10),
-      preparationTime: Number(item.preparationTime || 15),
-      isAvailable: item.isAvailable !== false,
-      isVeg: Boolean(item.isVeg || item.isVegetarian),
-      imageUrl: item.imageUrl || null,
-      department: item.department || 'KITCHEN',
-      categoryId: item.categoryId || '',
-      category: item.category,
+      id: item?.id || String(Math.random()),
+      name: item?.name || 'Unnamed Item',
+      description: item?.description,
+      price: Number(item?.price || 0),
+      costPrice: item?.costPrice ? Number(item.costPrice) : undefined,
+      taxRate: Number(item?.taxRate ?? item?.taxPercent ?? 10),
+      preparationTime: Number(item?.preparationTime || 15),
+      isAvailable: item?.isAvailable !== false,
+      isVeg: Boolean(item?.isVeg || item?.isVegetarian),
+      imageUrl: item?.imageUrl || null,
+      department: item?.department || 'KITCHEN',
+      categoryId: item?.categoryId || '',
+      category: item?.category,
     }));
   },
 };

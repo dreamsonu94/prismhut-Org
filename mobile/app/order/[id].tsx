@@ -192,9 +192,11 @@ export default function OrderDetailScreen() {
         <KotStatusTracker kots={order.kots} bots={order.bots} />
 
         {/* Itemized Order List */}
-        <Text style={styles.sectionTitle}>Ordered Items ({order.items.length})</Text>
+        <Text style={styles.sectionTitle}>
+          Ordered Items ({Array.isArray(order.items) ? order.items.length : 0})
+        </Text>
         <View style={styles.itemsCard}>
-          {order.items.map((item, idx) => (
+          {(Array.isArray(order.items) ? order.items : []).map((item, idx) => (
             <View key={item.id || idx} style={styles.itemRow}>
               <View style={styles.itemLeft}>
                 <Text style={styles.itemQty}>{item.quantity}x</Text>

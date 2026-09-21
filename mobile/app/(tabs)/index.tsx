@@ -18,6 +18,7 @@ import { useSocket } from '../../src/context/SocketContext';
 import { tableService } from '../../src/services/tableService';
 import { orderService } from '../../src/services/orderService';
 import { Table, Order } from '../../src/types';
+import { extractArray } from '../../src/utils/normalize';
 import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
 import { Header } from '../../src/components/common/Header';
 import { OrderCard } from '../../src/components/orders/OrderCard';
@@ -42,12 +43,15 @@ export default function DashboardScreen() {
         tableService.getTables(),
         orderService.getOrders({ status: undefined }),
       ]);
-      const safeTables = Array.isArray(tablesData) ? tablesData : [];
-      const safeOrders = Array.isArray(ordersData) ? ordersData : [];
+      const safeTables = extractArray<Table>(tablesData, 'tables');
+      const safeOrders = extractArray<Order>(ordersData, 'orders');
       setTables(safeTables);
       setRecentOrders(safeOrders.slice(0, 5));
     } catch (err: any) {
-      setError(err.message || 'Failed to sync with restaurant server');
+      console.error('[Dashboard] Error fetching dashboard data:', err);
+      setError(err?.message || 'Failed to sync with restaurant server');
+      setTables([]);
+      setRecentOrders([]);
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
@@ -78,15 +82,24 @@ export default function DashboardScreen() {
     loadDashboardData();
   };
 
+  console.log(
+    '[Dashboard] tables BEFORE FILTER:',
+    tables,
+    'isArray:',
+    Array.isArray(tables),
+    'type:',
+    typeof tables
+  );
+
   const safeTablesList = Array.isArray(tables) ? tables : [];
   const safeOrdersList = Array.isArray(recentOrders) ? recentOrders : [];
 
   const totalTables = safeTablesList.length;
-  const occupiedTables = safeTablesList.filter((t) => t?.status === 'OCCUPIED').length;
-  const availableTables = safeTablesList.filter((t) => t?.status === 'AVAILABLE').length;
+  const occupiedTables = safeTablesList.filter((t) => t && t.status === 'OCCUPIED').length;
+  const availableTables = safeTablesList.filter((t) => t && t.status === 'AVAILABLE').length;
 
   const activeOrdersCount = safeOrdersList.filter(
-    (o) => o?.status !== 'COMPLETED' && o?.status !== 'CANCELLED'
+    (o) => o && o.status !== 'COMPLETED' && o.status !== 'CANCELLED'
   ).length;
 
   return (
@@ -109,10 +122,8 @@ export default function DashboardScreen() {
         }
       />
 
-      {isLoading ? (
+      {isLoading && safeTablesList.length === 0 && safeOrdersList.length === 0 ? (
         <LoadingSkeleton message="Loading floor metrics..." />
-      ) : error ? (
-        <ErrorState message={error} onRetry={loadDashboardData} />
       ) : (
         <ScrollView
           style={styles.scroll}
@@ -121,6 +132,18 @@ export default function DashboardScreen() {
             <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />
           }
         >
+          {error ? (
+            <View style={styles.errorBanner}>
+              <View style={styles.errorTextContainer}>
+                <Text style={styles.errorTitle}>Floor Metrics Sync Notice</Text>
+                <Text style={styles.errorMessage}>{error}</Text>
+              </View>
+              <TouchableOpacity style={styles.retryButton} onPress={loadDashboardData}>
+                <Text style={styles.retryButtonText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+
           {/* Quick Stats Bento */}
           <View style={styles.statsGrid}>
             <TouchableOpacity
@@ -202,12 +225,12 @@ export default function DashboardScreen() {
               </TouchableOpacity>
             </View>
 
-            {recentOrders.length === 0 ? (
+            {safeOrdersList.length === 0 ? (
               <View style={styles.noOrdersCard}>
                 <Text style={styles.noOrdersText}>No active orders at this moment</Text>
               </View>
             ) : (
-              recentOrders.map((order) => (
+              safeOrdersList.map((order) => (
                 <OrderCard
                   key={order.id}
                   order={order}
@@ -338,5 +361,41 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: COLORS.textMuted,
     fontWeight: '500',
+  },
+  errorBanner: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
+    borderWidth: 1,
+    borderRadius: RADIUS.md,
+    padding: SPACING.md,
+    marginBottom: SPACING.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  errorTextContainer: {
+    flex: 1,
+    marginRight: SPACING.sm,
+  },
+  errorTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#991B1B',
+    marginBottom: 2,
+  },
+  errorMessage: {
+    fontSize: 12,
+    color: '#B91C1C',
+  },
+  retryButton: {
+    backgroundColor: '#DC2626',
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.xs,
+    borderRadius: RADIUS.sm,
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
   },
 });

@@ -16,7 +16,10 @@ export const KotStatusTracker: React.FC<KotStatusTrackerProps> = ({
   kots = [],
   bots = [],
 }) => {
-  if (kots.length === 0 && bots.length === 0) {
+  const safeKots = Array.isArray(kots) ? kots : [];
+  const safeBots = Array.isArray(bots) ? bots : [];
+
+  if (safeKots.length === 0 && safeBots.length === 0) {
     return null;
   }
 
@@ -25,7 +28,7 @@ export const KotStatusTracker: React.FC<KotStatusTrackerProps> = ({
       <Text style={styles.sectionHeader}>Kitchen & Bar Dispatch</Text>
 
       {/* Kitchen Tickets */}
-      {kots.map((kot) => (
+      {safeKots.map((kot) => (
         <View key={kot.id} style={styles.ticketCard}>
           <View style={styles.ticketHeader}>
             <View style={styles.badgeLabelRow}>
@@ -35,7 +38,7 @@ export const KotStatusTracker: React.FC<KotStatusTrackerProps> = ({
             <StatusBadge status={kot.status} type="ticket" />
           </View>
 
-          {kot.items && kot.items.length > 0 ? (
+          {Array.isArray(kot.items) && kot.items.length > 0 ? (
             <View style={styles.itemsList}>
               {kot.items.map((item, idx) => (
                 <View key={idx} style={styles.itemRow}>
@@ -54,7 +57,7 @@ export const KotStatusTracker: React.FC<KotStatusTrackerProps> = ({
       ))}
 
       {/* Bar Tickets */}
-      {bots.map((bot) => (
+      {safeBots.map((bot) => (
         <View key={bot.id} style={styles.ticketCard}>
           <View style={styles.ticketHeader}>
             <View style={styles.badgeLabelRow}>
@@ -64,7 +67,7 @@ export const KotStatusTracker: React.FC<KotStatusTrackerProps> = ({
             <StatusBadge status={bot.status} type="ticket" />
           </View>
 
-          {bot.items && bot.items.length > 0 ? (
+          {Array.isArray(bot.items) && bot.items.length > 0 ? (
             <View style={styles.itemsList}>
               {bot.items.map((item, idx) => (
                 <View key={idx} style={styles.itemRow}>

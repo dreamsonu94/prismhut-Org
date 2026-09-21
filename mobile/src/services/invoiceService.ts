@@ -3,6 +3,7 @@
  */
 import { apiClient } from '../api/client';
 import { Invoice } from '../types';
+import { extractArray } from '../utils/normalize';
 
 export const invoiceService = {
   async getInvoices(params?: { date?: string; search?: string }): Promise<Invoice[]> {
@@ -12,17 +13,10 @@ export const invoiceService = {
     });
 
     if (!res.success || !res.data) {
-      throw new Error(res.error?.message || 'Failed to fetch invoices');
+      return [];
     }
 
-    let invoices: any[] = [];
-    if (Array.isArray(res.data)) {
-      invoices = res.data;
-    } else if (res.data && Array.isArray(res.data.invoices)) {
-      invoices = res.data.invoices;
-    } else if (res.data && Array.isArray(res.data.data)) {
-      invoices = res.data.data;
-    }
+    const invoices = extractArray<any>(res.data, 'invoices');
 
     return invoices.map((inv: any): Invoice => ({
       id: inv.id,

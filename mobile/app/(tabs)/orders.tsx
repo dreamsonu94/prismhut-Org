@@ -18,6 +18,7 @@ import { useAuth } from '../../src/context/AuthContext';
 import { useSocket } from '../../src/context/SocketContext';
 import { orderService } from '../../src/services/orderService';
 import { Order, OrderStatus } from '../../src/types';
+import { extractArray } from '../../src/utils/normalize';
 import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
 import { Header } from '../../src/components/common/Header';
 import { OrderCard } from '../../src/components/orders/OrderCard';
@@ -42,9 +43,10 @@ export default function OrdersScreen() {
     try {
       setError(null);
       const data = await orderService.getOrders();
-      setOrders(Array.isArray(data) ? data : []);
+      setOrders(extractArray<Order>(data, 'orders'));
     } catch (err: any) {
-      setError(err.message || 'Failed to fetch restaurant orders');
+      setError(err?.message || 'Failed to fetch restaurant orders');
+      setOrders([]);
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);

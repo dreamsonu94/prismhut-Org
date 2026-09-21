@@ -4,6 +4,7 @@
  */
 import { apiClient } from '../api/client';
 import { Order, OrderStatus, OrderType } from '../types';
+import { extractArray } from '../utils/normalize';
 
 export interface CreateOrderItemInput {
   menuItemId: string;
@@ -85,17 +86,11 @@ export const orderService = {
     });
 
     if (!res.success || !res.data) {
-      throw new Error(res.error?.message || 'Failed to fetch orders');
+      console.warn('[Dashboard] Fetch orders returned unsuccessful response:', res);
+      return [];
     }
 
-    let ordersList: any[] = [];
-    if (Array.isArray(res.data)) {
-      ordersList = res.data;
-    } else if (res.data && Array.isArray(res.data.orders)) {
-      ordersList = res.data.orders;
-    } else if (res.data && Array.isArray(res.data.data)) {
-      ordersList = res.data.data;
-    }
+    const ordersList = extractArray<any>(res.data, 'orders');
 
     return ordersList.map((o: any): Order => ({
       ...o,

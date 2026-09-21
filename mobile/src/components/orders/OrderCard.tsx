@@ -18,8 +18,8 @@ export const OrderCard: React.FC<OrderCardProps> = ({
   currency = '$',
   onPress,
 }) => {
-  const itemCount = order.items
-    ? order.items.reduce((sum, item) => sum + item.quantity, 0)
+  const itemCount = Array.isArray(order.items)
+    ? order.items.reduce((sum, item) => sum + (item?.quantity || 0), 0)
     : 0;
 
   const formattedTime = new Date(order.createdAt).toLocaleTimeString([], {
@@ -68,7 +68,7 @@ export const OrderCard: React.FC<OrderCardProps> = ({
       </View>
 
       {/* KOT status pills if present */}
-      {order.kots && order.kots.length > 0 ? (
+      {Array.isArray(order.kots) && order.kots.length > 0 ? (
         <View style={styles.kotSection}>
           <Text style={styles.kotSectionLabel}>Kitchen Tickets:</Text>
           <View style={styles.kotBadgesRow}>
