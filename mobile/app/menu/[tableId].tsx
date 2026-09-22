@@ -18,7 +18,7 @@ import { useAuth } from '../../src/context/AuthContext';
 import { useCart } from '../../src/context/CartContext';
 import { menuService } from '../../src/services/menuService';
 import { MenuCategory, MenuItem } from '../../src/types';
-import { extractArray } from '../../src/utils/normalize';
+import { normalizeCategories, normalizeMenuItems } from '../../src/utils/normalize';
 import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
 import { Header } from '../../src/components/common/Header';
 import { CategoryTabs } from '../../src/components/menu/CategoryTabs';
@@ -61,8 +61,8 @@ export default function MenuScreen() {
         menuService.getCategories(),
         menuService.getMenuItems(),
       ]);
-      setCategories(extractArray<MenuCategory>(categoriesData, 'categories'));
-      setMenuItems(extractArray<MenuItem>(itemsData, 'items'));
+      setCategories(normalizeCategories(categoriesData));
+      setMenuItems(normalizeMenuItems(itemsData));
     } catch (err: any) {
       setError(err?.message || 'Failed to load restaurant menu');
       setCategories([]);
@@ -76,7 +76,7 @@ export default function MenuScreen() {
     loadMenuData();
   }, [loadMenuData]);
 
-  const safeMenuItems = useMemo(() => (Array.isArray(menuItems) ? menuItems : []), [menuItems]);
+  const safeMenuItems = useMemo(() => normalizeMenuItems(menuItems), [menuItems]);
 
   const filteredItems = useMemo(() => {
     return safeMenuItems.filter((item) => {

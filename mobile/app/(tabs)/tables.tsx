@@ -18,7 +18,7 @@ import { useAuth } from '../../src/context/AuthContext';
 import { useSocket } from '../../src/context/SocketContext';
 import { tableService } from '../../src/services/tableService';
 import { Table, TableStatus } from '../../src/types';
-import { extractArray } from '../../src/utils/normalize';
+import { normalizeTables } from '../../src/utils/normalize';
 import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
 import { Header } from '../../src/components/common/Header';
 import { TableCard } from '../../src/components/tables/TableCard';
@@ -45,7 +45,7 @@ export default function TablesScreen() {
     try {
       setError(null);
       const data = await tableService.getTables();
-      setTables(extractArray<Table>(data, 'tables'));
+      setTables(normalizeTables(data));
     } catch (err: any) {
       setError(err?.message || 'Failed to load restaurant floor tables');
       setTables([]);
@@ -77,7 +77,7 @@ export default function TablesScreen() {
     fetchTables();
   };
 
-  const safeTables = useMemo(() => (Array.isArray(tables) ? tables : []), [tables]);
+  const safeTables = useMemo(() => normalizeTables(tables), [tables]);
 
   // Section list extracted from tables
   const sections = useMemo(() => {

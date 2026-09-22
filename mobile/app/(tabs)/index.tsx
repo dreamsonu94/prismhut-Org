@@ -18,7 +18,7 @@ import { useSocket } from '../../src/context/SocketContext';
 import { tableService } from '../../src/services/tableService';
 import { orderService } from '../../src/services/orderService';
 import { Table, Order } from '../../src/types';
-import { extractArray } from '../../src/utils/normalize';
+import { normalizeTables, normalizeOrders } from '../../src/utils/normalize';
 import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
 import { Header } from '../../src/components/common/Header';
 import { OrderCard } from '../../src/components/orders/OrderCard';
@@ -43,8 +43,8 @@ export default function DashboardScreen() {
         tableService.getTables(),
         orderService.getOrders({ status: undefined }),
       ]);
-      const safeTables = extractArray<Table>(tablesData, 'tables');
-      const safeOrders = extractArray<Order>(ordersData, 'orders');
+      const safeTables = normalizeTables(tablesData);
+      const safeOrders = normalizeOrders(ordersData);
       setTables(safeTables);
       setRecentOrders(safeOrders.slice(0, 5));
     } catch (err: any) {
@@ -82,17 +82,8 @@ export default function DashboardScreen() {
     loadDashboardData();
   };
 
-  console.log(
-    '[Dashboard] tables BEFORE FILTER:',
-    tables,
-    'isArray:',
-    Array.isArray(tables),
-    'type:',
-    typeof tables
-  );
-
-  const safeTablesList = Array.isArray(tables) ? tables : [];
-  const safeOrdersList = Array.isArray(recentOrders) ? recentOrders : [];
+  const safeTablesList = normalizeTables(tables);
+  const safeOrdersList = normalizeOrders(recentOrders);
 
   const totalTables = safeTablesList.length;
   const occupiedTables = safeTablesList.filter((t) => t && t.status === 'OCCUPIED').length;
@@ -122,8 +113,14 @@ export default function DashboardScreen() {
         }
       />
 
-      {isLoading && safeTablesList.length === 0 && safeOrdersList.length === 0 ? (
+      {isLoading && safeTablesList.length === 0 && safeOrdersList.length === 0 && !error ? (
         <LoadingSkeleton message="Loading floor metrics..." />
+      ) : error && safeTablesList.length === 0 && safeOrdersList.length === 0 ? (
+        <ErrorState
+          title="Floor Metrics Sync Error"
+          message={error}
+          onRetry={loadDashboardData}
+        />
       ) : (
         <ScrollView
           style={styles.scroll}

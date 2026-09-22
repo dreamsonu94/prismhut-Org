@@ -4,7 +4,7 @@
  */
 import { apiClient } from '../api/client';
 import { Order, OrderStatus, OrderType } from '../types';
-import { extractArray } from '../utils/normalize';
+import { normalizeOrders, extractArray } from '../utils/normalize';
 
 export interface CreateOrderItemInput {
   menuItemId: string;
@@ -55,7 +55,13 @@ export const orderService = {
       throw new Error(res.error?.message || 'Failed to submit order');
     }
 
-    return res.data;
+    const rawOrder = (res.data as any)?.order || res.data;
+    const normalizedOrders = normalizeOrders([rawOrder]);
+
+    return {
+      order: normalizedOrders[0],
+      isDuplicate: (res.data as any)?.isDuplicate || false,
+    };
   },
 
   async addItemsToOrder(orderId: string, items: CreateOrderItemInput[]): Promise<Order> {
@@ -71,7 +77,9 @@ export const orderService = {
       throw new Error(res.error?.message || 'Failed to append items to order');
     }
 
-    return res.data;
+    const rawOrder = (res.data as any)?.order || res.data;
+    const normalizedOrders = normalizeOrders([rawOrder]);
+    return normalizedOrders[0];
   },
 
   async getOrders(params?: {
@@ -90,25 +98,7 @@ export const orderService = {
       return [];
     }
 
-    const ordersList = extractArray<any>(res.data, 'orders');
-
-    return ordersList.map((o: any): Order => ({
-      ...o,
-      items: Array.isArray(o.items) ? o.items : [],
-      kots: Array.isArray(o.kots) ? o.kots : [],
-      bots: Array.isArray(o.bots) ? o.bots : [],
-      invoices: Array.isArray(o.invoices) ? o.invoices : [],
-      payments: Array.isArray(o.payments) ? o.payments : [],
-      totalAmount: Number(o.totalAmount ?? o.grandTotal ?? 0),
-      grandTotal: Number(o.grandTotal ?? o.totalAmount ?? 0),
-      taxAmount: Number(o.taxAmount ?? o.tax ?? 0),
-      tax: Number(o.tax ?? o.taxAmount ?? 0),
-      discountAmount: Number(o.discountAmount ?? o.discount ?? 0),
-      discount: Number(o.discount ?? o.discountAmount ?? 0),
-      subtotal: Number(o.subtotal ?? 0),
-      serviceCharge: Number(o.serviceCharge ?? 0),
-      guestCount: Number(o.guestCount ?? 1),
-    }));
+    return normalizeOrders(res);
   },
 
   async getOrderById(id: string): Promise<Order> {
@@ -120,24 +110,9 @@ export const orderService = {
       throw new Error(res.error?.message || 'Failed to fetch order details');
     }
 
-    const o = res.data?.data || res.data;
-    return {
-      ...o,
-      items: Array.isArray(o.items) ? o.items : [],
-      kots: Array.isArray(o.kots) ? o.kots : [],
-      bots: Array.isArray(o.bots) ? o.bots : [],
-      invoices: Array.isArray(o.invoices) ? o.invoices : [],
-      payments: Array.isArray(o.payments) ? o.payments : [],
-      totalAmount: Number(o.totalAmount ?? o.grandTotal ?? 0),
-      grandTotal: Number(o.grandTotal ?? o.totalAmount ?? 0),
-      taxAmount: Number(o.taxAmount ?? o.tax ?? 0),
-      tax: Number(o.tax ?? o.taxAmount ?? 0),
-      discountAmount: Number(o.discountAmount ?? o.discount ?? 0),
-      discount: Number(o.discount ?? o.discountAmount ?? 0),
-      subtotal: Number(o.subtotal ?? 0),
-      serviceCharge: Number(o.serviceCharge ?? 0),
-      guestCount: Number(o.guestCount ?? 1),
-    };
+    const raw = (res.data as any)?.data || res.data;
+    const normalized = normalizeOrders([raw]);
+    return normalized[0];
   },
 
   async cancelOrder(id: string, reason?: string): Promise<Order> {
